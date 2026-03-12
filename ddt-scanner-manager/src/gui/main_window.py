@@ -310,11 +310,9 @@ class MainWindow(QMainWindow):
             window.show()
 
     def _on_open_admin(self) -> None:
-        QMessageBox.information(
-            self,
-            "Pannello Admin",
-            "Il pannello admin sarà disponibile nella Fase 5.",
-        )
+        from src.gui.admin_panel import AdminPanel
+        dlg = AdminPanel(user=self._user, watcher=self._watcher, parent=self)
+        dlg.exec()
 
     def _on_about(self) -> None:
         QMessageBox.about(

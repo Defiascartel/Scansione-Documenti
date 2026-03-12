@@ -387,3 +387,65 @@ def log_operation(
              json.dumps(barcodes), action),
         )
         conn.commit()
+
+
+@dataclass
+class OperationLogEntry:
+    id: int
+    username: str
+    store_name: str
+    filename: str
+    action: str
+    barcodes_json: str
+    processed_at: str
+
+
+def list_operation_log(
+    store_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    limit: int = 500,
+) -> list[OperationLogEntry]:
+    """Return operation log entries with optional filters.
+
+    Args:
+        store_id: Filter by store (optional).
+        user_id: Filter by user (optional).
+        limit: Maximum number of rows to return.
+
+    Returns:
+        List of OperationLogEntry sorted newest-first.
+    """
+    query = (
+        "SELECT ol.id, COALESCE(u.username, '?') AS username, "
+        "COALESCE(s.name, '?') AS store_name, "
+        "ol.filename, ol.action, ol.barcodes_json, ol.processed_at "
+        "FROM operation_log ol "
+        "LEFT JOIN users u ON ol.user_id = u.id "
+        "LEFT JOIN stores s ON ol.store_id = s.id "
+        "WHERE 1=1"
+    )
+    params: list = []
+    if store_id is not None:
+        query += " AND ol.store_id = ?"
+        params.append(store_id)
+    if user_id is not None:
+        query += " AND ol.user_id = ?"
+        params.append(user_id)
+    query += " ORDER BY ol.processed_at DESC LIMIT ?"
+    params.append(limit)
+
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+
+    return [
+        OperationLogEntry(
+            id=r["id"],
+            username=r["username"],
+            store_name=r["store_name"],
+            filename=r["filename"],
+            action=r["action"],
+            barcodes_json=r["barcodes_json"] or "[]",
+            processed_at=r["processed_at"],
+        )
+        for r in rows
+    ]
