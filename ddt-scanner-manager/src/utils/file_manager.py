@@ -164,7 +164,13 @@ def _move_file(
         resolved_dir = _discarded_root(source.parent)
 
     resolved_dir.mkdir(parents=True, exist_ok=True)
-    dest_file = _resolve_dest_path(resolved_dir, source.name)
+
+    # Confirmed files are renamed to their barcode values
+    if action == "confirmed" and barcodes:
+        new_name = "_".join(barcodes) + source.suffix
+    else:
+        new_name = source.name
+    dest_file = _resolve_dest_path(resolved_dir, new_name)
 
     _move_with_retry(source, dest_file)
     logger.info("File %s → %s (%s)", source.name, dest_file, action)
