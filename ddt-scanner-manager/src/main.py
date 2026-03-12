@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from src.config import APP_NAME, APP_VERSION
 from src.database.db import initialize_database
 from src.gui.login_dialog import LoginDialog
+from src.gui.main_window import MainWindow
 from src.utils.logger import setup_logging, get_logger
 
 
@@ -20,7 +21,6 @@ def main() -> None:
     try:
         initialize_database()
     except Exception as exc:
-        # Show error before Qt app is shown
         app = QApplication(sys.argv)
         QMessageBox.critical(None, "Errore Database", f"Impossibile inizializzare il database:\n{exc}")
         sys.exit(1)
@@ -38,14 +38,10 @@ def main() -> None:
     user = dialog.authenticated_user
     logger.info("Logged in as '%s' (role: %s).", user.username, user.role)
 
-    # TODO Fase 4: open MainWindow(user) here
-    QMessageBox.information(
-        None,
-        "Accesso effettuato",
-        f"Benvenuto, {user.username}!\nRuolo: {user.role}\n\n(La finestra principale sarà disponibile nella Fase 4)",
-    )
+    window = MainWindow(user)
+    window.show()
 
-    sys.exit(0)
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
