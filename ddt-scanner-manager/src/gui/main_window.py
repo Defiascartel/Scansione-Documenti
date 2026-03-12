@@ -295,10 +295,16 @@ class MainWindow(QMainWindow):
         self._barcode_editor.set_loading(True)
         self._set_status(f"Analisi in corso: {event.path.name}…")
 
-        # Abort previous worker if still running
-        if self._ocr_worker and self._ocr_worker.isRunning():
-            self._ocr_worker.quit()
-            self._ocr_worker.wait(1000)
+        # Abort previous worker: disconnect signals first to avoid stale callbacks
+        if self._ocr_worker:
+            try:
+                self._ocr_worker.finished.disconnect()
+                self._ocr_worker.error.disconnect()
+            except RuntimeError:
+                pass  # already disconnected
+            if self._ocr_worker.isRunning():
+                self._ocr_worker.quit()
+                self._ocr_worker.wait(1000)
 
         self._ocr_worker = _OcrWorker(event.path)
         self._ocr_worker.finished.connect(self._on_ocr_finished)
@@ -432,10 +438,19 @@ class MainWindow(QMainWindow):
 
     def _shutdown(self) -> None:
         self._poll_timer.stop()
+        if hasattr(self, "_notify_timer"):
+            self._notify_timer.stop()
         self._watcher.stop()
-        if self._ocr_worker and self._ocr_worker.isRunning():
-            self._ocr_worker.quit()
-            self._ocr_worker.wait(2000)
+        if self._ocr_worker:
+            try:
+                self._ocr_worker.finished.disconnect()
+                self._ocr_worker.error.disconnect()
+            except RuntimeError:
+                pass
+            if self._ocr_worker.isRunning():
+                self._ocr_worker.quit()
+                if not self._ocr_worker.wait(2000):
+                    logger.warning("OCR worker did not stop within timeout.")
         if self._tray:
             self._tray.hide()
 

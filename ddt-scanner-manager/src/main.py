@@ -1,7 +1,6 @@
 """Application entry point."""
 
 import sys
-from pathlib import Path
 
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -20,23 +19,23 @@ def main() -> None:
     logger = get_logger("main")
     logger.info("Starting %s v%s", APP_NAME, APP_VERSION)
 
-    # Initialize DB (creates tables + default admin if needed)
-    try:
-        initialize_database()
-    except Exception as exc:
-        app = QApplication(sys.argv)
-        QMessageBox.critical(None, "Errore Database", f"Impossibile inizializzare il database:\n{exc}")
-        sys.exit(1)
-
-    app = QApplication.instance() or QApplication(sys.argv)
+    # Create QApplication once, before any QWidget or QMessageBox
+    app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
     app.setStyleSheet(APP_STYLESHEET)
 
-    # App icon (if available)
     icon_path = BASE_DIR / "assets" / "icon.ico"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
+
+    # Initialize DB (creates tables + default admin if needed)
+    try:
+        initialize_database()
+    except Exception as exc:
+        logger.critical("Database initialization failed: %s", exc)
+        QMessageBox.critical(None, "Errore Database", f"Impossibile inizializzare il database:\n{exc}")
+        sys.exit(1)
 
     # Show login dialog; exit if the user closes it without logging in
     dialog = LoginDialog()
@@ -45,6 +44,10 @@ def main() -> None:
         sys.exit(0)
 
     user = dialog.authenticated_user
+    if user is None:
+        logger.error("Login accepted but authenticated_user is None.")
+        sys.exit(1)
+
     logger.info("Logged in as '%s' (role: %s).", user.username, user.role)
 
     window = MainWindow(user)

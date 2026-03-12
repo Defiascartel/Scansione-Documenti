@@ -366,7 +366,12 @@ class _StoresTab(QWidget):
             QMessageBox.information(self, "Selezione", "Seleziona un negozio da modificare.")
             return
         stores = {s.id: s for s in list_stores()}
-        dlg = _StoreDialog(store=stores[sid], parent=self)
+        store = stores.get(sid)
+        if store is None:
+            QMessageBox.warning(self, "Errore", "Negozio non trovato. Aggiornare la lista.")
+            self.refresh()
+            return
+        dlg = _StoreDialog(store=store, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             try:
                 update_store(sid, code=dlg.code, name=dlg.name)
@@ -455,8 +460,13 @@ class _UsersTab(QWidget):
             QMessageBox.information(self, "Selezione", "Seleziona un utente da modificare.")
             return
         users = {u.id: u for u in list_users()}
+        user = users.get(uid)
+        if user is None:
+            QMessageBox.warning(self, "Errore", "Utente non trovato. Aggiornare la lista.")
+            self.refresh()
+            return
         stores = list_stores()
-        dlg = _UserDialog(stores=stores, user=users[uid], parent=self)
+        dlg = _UserDialog(stores=stores, user=user, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             try:
                 kwargs: dict = {
@@ -626,22 +636,39 @@ class _LogTab(QWidget):
         )
         layout.addWidget(self._table)
 
+        # Connect filter once here — NOT inside refresh()
+        self._store_filter.currentIndexChanged.connect(self._on_filter_changed)
+
+    def _on_filter_changed(self) -> None:
+        self._load_entries()
+
     def refresh(self) -> None:
-        # Refresh store filter
+        """Refresh store filter list and reload log entries."""
         current_store_id = self._store_filter.currentData()
         self._store_filter.blockSignals(True)
         self._store_filter.clear()
         self._store_filter.addItem("Tutti i negozi", None)
-        for s in list_stores():
-            self._store_filter.addItem(f"{s.name} ({s.code})", s.id)
+        try:
+            for s in list_stores():
+                self._store_filter.addItem(f"{s.name} ({s.code})", s.id)
+        except Exception as exc:
+            logger.warning("Failed to load stores in log tab: %s", exc)
         if current_store_id is not None:
             idx = self._store_filter.findData(current_store_id)
             if idx >= 0:
                 self._store_filter.setCurrentIndex(idx)
         self._store_filter.blockSignals(False)
+        self._load_entries()
 
+    def _load_entries(self) -> None:
+        """Load log entries from DB and populate the table."""
         store_id = self._store_filter.currentData()
-        entries = list_operation_log(store_id=store_id, limit=500)
+        try:
+            entries = list_operation_log(store_id=store_id, limit=500)
+        except Exception as exc:
+            logger.error("Failed to load operation log: %s", exc)
+            QMessageBox.warning(self, "Errore", f"Impossibile caricare il log:\n{exc}")
+            return
 
         self._table.setRowCount(len(entries))
         for row, e in enumerate(entries):
@@ -662,7 +689,6 @@ class _LogTab(QWidget):
             _set_cell(self._table, row, 5, barcodes_text)
 
         self._table.resizeColumnsToContents()
-        self._store_filter.currentIndexChanged.connect(lambda _: self.refresh())
 
 
 # ---------------------------------------------------------------------------

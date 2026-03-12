@@ -8,12 +8,19 @@ from src.config import LOGS_DIR, APP_NAME
 
 
 def setup_logging() -> logging.Logger:
-    """Configure and return the application logger.
+    """Configure and return the application logger (idempotent).
+
+    Safe to call multiple times — handlers are added only once.
 
     Returns:
         Configured logger instance.
     """
     logger = logging.getLogger(APP_NAME)
+
+    # Idempotency guard: skip if handlers are already attached
+    if logger.handlers:
+        return logger
+
     logger.setLevel(logging.DEBUG)
 
     # File handler with rotation (max 5MB, keep 3 backups)

@@ -227,10 +227,13 @@ class FolderWatcher:
     def _poll_loop(self) -> None:
         """Periodically scan all watched folders for files missed by watchdog."""
         while not self._stop_event.wait(POLLING_INTERVAL):
-            with self._lock:
-                folders_snapshot = list(self._folders)
-            for wf in folders_snapshot:
-                self._poll_folder(wf)
+            try:
+                with self._lock:
+                    folders_snapshot = list(self._folders)
+                for wf in folders_snapshot:
+                    self._poll_folder(wf)
+            except Exception as exc:
+                logger.error("Unexpected error in poll loop: %s", exc, exc_info=True)
 
     def _poll_folder(self, wf: WatchedFolder) -> None:
         if not wf.path.exists():

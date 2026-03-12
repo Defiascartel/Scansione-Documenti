@@ -49,10 +49,14 @@ class DocumentViewer(QWidget):
         self._filename_label.setText(path.name)
 
         ext = path.suffix.lower()
-        if ext == ".pdf":
-            pixmap = self._load_pdf_first_page(path)
-        else:
-            pixmap = QPixmap(str(path))
+        try:
+            if ext == ".pdf":
+                pixmap = self._load_pdf_first_page(path)
+            else:
+                pixmap = QPixmap(str(path))
+        except Exception as exc:
+            logger.error("Unexpected error loading '%s': %s", path, exc)
+            pixmap = None
 
         if pixmap and not pixmap.isNull():
             self._base_pixmap = pixmap
@@ -60,6 +64,7 @@ class DocumentViewer(QWidget):
         else:
             logger.warning("Failed to load pixmap for: %s", path)
             self._scene.clear()
+            self._filename_label.setText(f"{path.name}  ⚠ anteprima non disponibile")
 
     def clear(self) -> None:
         """Clear the viewer."""
