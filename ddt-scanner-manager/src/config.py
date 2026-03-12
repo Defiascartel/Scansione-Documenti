@@ -1,10 +1,15 @@
 """Application configuration."""
 
 import os
+import sys
 from pathlib import Path
 
-# Base directories
-BASE_DIR = Path(__file__).parent.parent
+# Base directories — when running as a PyInstaller bundle, use the directory
+# containing the .exe so that data/logs persist across runs.
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).parent
+else:
+    BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
 LOGS_DIR = BASE_DIR / "logs"
 

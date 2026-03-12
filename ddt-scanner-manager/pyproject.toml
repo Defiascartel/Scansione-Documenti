@@ -12,13 +12,12 @@ dependencies = [
     "bcrypt>=4.1.0",
     "pyzbar>=0.1.9",
     "opencv-python>=4.9.0",
-    "Pillow>=10.0.0",
     "watchdog>=3.0.0",
-    "pdf2image>=1.16.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4.0"]
+build = ["pyinstaller>=6.0.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

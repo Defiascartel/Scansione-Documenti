@@ -2,6 +2,18 @@
 
 Applicazione desktop Windows per la digitalizzazione e archiviazione dei DDT (Documenti di Trasporto) scansionati nei punti vendita Unieuro.
 
+## Installazione rapida
+
+1. Copiare `DDT_Scanner_Manager.exe` in una cartella a scelta (es. `C:\DDT_Scanner`)
+2. Lanciare l'exe — al primo avvio vengono create automaticamente:
+   - `data\` — database SQLite con utenze, config e log
+   - `logs\` — file di log con rotazione
+3. Login con utente di default: **admin** / **admin123**
+4. **Cambiare subito la password** da Impostazioni → Pannello Admin → tab Utenze
+
+> L'exe è autocontenuto: non richiede Python, DLL o installazioni aggiuntive.
+> Database e log vengono creati nella stessa cartella dell'exe.
+
 ## Panoramica
 
 ```
@@ -17,7 +29,7 @@ Operatore vede documento + barcode estratti
     ↓
 Operatore corregge (se necessario) e conferma
     ↓
-File spostato in cartella "_confermati" + sidecar JSON
+File rinominato con barcode e spostato in cartella OUT + sidecar JSON
 ```
 
 ## Stack tecnologico
@@ -99,14 +111,15 @@ Risultato attuale: **39 test, tutti verdi**.
 
 ## Build .exe
 
-```bat
-build.bat
+```bash
+pip install pyinstaller
+pyinstaller ddt_scanner.spec
 ```
 
-Output: `dist\DDT_Scanner_Manager\DDT_Scanner_Manager.exe`
+Output: `dist\DDT_Scanner_Manager.exe` (singolo file, ~105 MB)
 
-> **Prerequisiti build:**
-> - Le DLL zbar (`libzbar-64.dll`) sono incluse automaticamente se pyzbar è installato via pip
+> **Note build:**
+> - L'exe è self-contained (onefile): un unico file da distribuire
 > - Il rendering PDF usa `QPdfDocument` (incluso in PySide6) — nessuna dipendenza esterna richiesta
 
 ---
@@ -139,8 +152,8 @@ Output: `dist\DDT_Scanner_Manager\DDT_Scanner_Manager.exe`
 - Layout a 3 pannelli ridimensionabili: **coda** | **viewer** | **barcode editor**
 - Viewer con zoom (rotella mouse), pan (drag), rotazione 90°, fit-to-window
 - Lista barcode editabile inline: modifica, aggiungi, rimuovi
-- Pulsante **Conferma** (verde) → sposta in `_confermati` + sidecar JSON + log DB
-- Pulsante **Scarta** (rosso) → sposta in `_scartati` + sidecar JSON + log DB
+- Pulsante **Conferma** (verde) → rinomina con barcode, sposta in cartella OUT + sidecar JSON + log DB
+- Pulsante **Scarta** (rosso) → sposta in cartella scartati + sidecar JSON + log DB
 - Retry automatico (4 tentativi) se il file è ancora bloccato dallo scanner
 - System tray con notifiche balloon per nuovi file in coda
 
@@ -151,22 +164,23 @@ Output: `dist\DDT_Scanner_Manager\DDT_Scanner_Manager.exe`
 - Tab **Log Operazioni**: storico con filtro per negozio, colori per azione
 
 ### Archiviazione
-- Cartella destinazione derivata automaticamente: `{cartella}_confermati` / `{cartella}_scartati`
+- L'admin configura cartella IN (sorgente) e OUT (destinazione) per ogni tipo documento
+- File confermati rinominati con i barcode (es. `8016474743.pdf`, `8016474743_8016474744.pdf`)
 - Creazione automatica cartelle destinazione se non esistono
 - Risoluzione conflitti di nome con suffisso timestamp
 - Sidecar `.json` con barcode confermati, operatore, negozio e timestamp
 
 ---
 
-## Struttura cartelle di rete
+## Struttura cartelle di rete (esempio)
 
 ```
 \\server\scansioni\
   ├── negozio_001\
-  │   ├── acquisti\               ← monitorata
-  │   ├── acquisti_confermati\    ← destinazione automatica
-  │   ├── resi\                   ← monitorata
-  │   └── resi_confermati\
+  │   ├── acquisti\               ← cartella IN (monitorata)
+  │   ├── acquisti_confermati\    ← cartella OUT (configurata dall'admin)
+  │   ├── resi\                   ← cartella IN
+  │   └── resi_confermati\        ← cartella OUT
   └── negozio_002\
       └── ...
 ```

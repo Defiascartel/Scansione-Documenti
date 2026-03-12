@@ -2,24 +2,25 @@
 #
 # PyInstaller spec — DDT Scanner Manager
 #
-# Prerequisiti prima di eseguire:
-#   pip install pyinstaller pyzbar opencv-python Pillow PySide6 bcrypt watchdog pdf2image
-#
 # Build:
 #   cd ddt-scanner-manager
 #   pyinstaller ddt_scanner.spec
 #
-# Output: dist/DDT_Scanner_Manager/
+# Output: dist/DDT_Scanner_Manager.exe  (single file)
 
 import sys
 from pathlib import Path
-import pyzbar
 
 # ---------------------------------------------------------------------------
 # Collect zbar DLLs bundled inside the pyzbar wheel (Windows only)
 # ---------------------------------------------------------------------------
-pyzbar_dir = Path(pyzbar.__file__).parent
-zbar_binaries = [(str(dll), ".") for dll in pyzbar_dir.glob("*.dll")]
+zbar_binaries = []
+try:
+    import pyzbar
+    pyzbar_dir = Path(pyzbar.__file__).parent
+    zbar_binaries = [(str(dll), ".") for dll in pyzbar_dir.glob("*.dll")]
+except ImportError:
+    pass
 
 block_cipher = None
 
@@ -29,20 +30,14 @@ a = Analysis(
     binaries=zbar_binaries,
     datas=[
         ("assets", "assets"),          # icon, etc.
-        ("src", "src"),                # include full src package
     ],
     hiddenimports=[
         # pyzbar
         "pyzbar.pyzbar",
         "pyzbar.wrapper",
-        "pyzbar.zbar",
-        # PIL / Pillow
-        "PIL._imaging",
-        "PIL.Image",
-        "PIL.ImageDraw",
-        "PIL.ImageFilter",
         # OpenCV
         "cv2",
+        "cv2.barcode",
         # watchdog Windows backend
         "watchdog.observers.winapi",
         "watchdog.events",
@@ -51,6 +46,7 @@ a = Analysis(
         # PySide6 extras
         "PySide6.QtSvg",
         "PySide6.QtPrintSupport",
+        "PySide6.QtPdf",
     ],
     hookspath=[],
     hooksconfig={},
@@ -73,24 +69,16 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     [],
-    exclude_binaries=True,
     name="DDT_Scanner_Manager",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,                 # no console window
-    icon="assets/icon.ico",        # comment out if icon.ico is missing
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
     upx_exclude=[],
-    name="DDT_Scanner_Manager",
+    console=False,                 # no console window
+    icon="assets/icon.ico" if Path("assets/icon.ico").exists() else None,
 )
