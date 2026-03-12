@@ -86,6 +86,18 @@ py -m pytest tests/ -v
 
 Risultato attuale: **40 test, tutti verdi**.
 
+## Build .exe
+
+```bat
+build.bat
+```
+
+Output: `dist\DDT_Scanner_Manager\DDT_Scanner_Manager.exe`
+
+> **Prerequisiti build:**
+> - [Poppler per Windows](https://github.com/oschwartz10612/poppler-windows/releases) (per PDF) — copiare `bin\` in `dist\DDT_Scanner_Manager\`
+> - Le DLL zbar (`libzbar-64.dll`) sono incluse automaticamente se pyzbar è installato via pip
+
 ## Funzionalità implementate
 
 ### Fase 0 — Scaffolding
@@ -128,10 +140,10 @@ Risultato attuale: **40 test, tutti verdi**.
 | 1 | Database e autenticazione | Completata |
 | 2 | OCR / Barcode | Completata |
 | 3 | File Watcher + File Manager | Completata |
-| 4 | GUI base (finestra principale a 3 pannelli) | Pianificata |
-| 5 | Pannello Admin | Pianificata |
-| 6 | Integrazione end-to-end e polish | Pianificata |
-| 7 | Build .exe con PyInstaller | Pianificata |
+| 4 | GUI base (finestra principale a 3 pannelli) | Completata |
+| 5 | Pannello Admin | Completata |
+| 6 | Integrazione end-to-end e polish | Completata |
+| 7 | Build .exe con PyInstaller | Completata |
 
 ## Ruoli utente
 

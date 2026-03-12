@@ -1,13 +1,16 @@
 """Application entry point."""
 
 import sys
+from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from src.config import APP_NAME, APP_VERSION
+from src.config import APP_NAME, APP_VERSION, BASE_DIR
 from src.database.db import initialize_database
 from src.gui.login_dialog import LoginDialog
 from src.gui.main_window import MainWindow
+from src.gui.styles import APP_STYLESHEET
 from src.utils.logger import setup_logging, get_logger
 
 
@@ -28,6 +31,12 @@ def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
+    app.setStyleSheet(APP_STYLESHEET)
+
+    # App icon (if available)
+    icon_path = BASE_DIR / "assets" / "icon.ico"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     # Show login dialog; exit if the user closes it without logging in
     dialog = LoginDialog()

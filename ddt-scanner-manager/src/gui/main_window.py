@@ -3,21 +3,22 @@
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QTimer, Qt, Signal
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import QThread, QTimer, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QSplitter,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import QThread
 
-from src.config import APP_NAME, APP_VERSION
+from src.config import APP_NAME, APP_VERSION, BASE_DIR
 from src.database.db import (
     User,
     list_stores,
@@ -34,7 +35,8 @@ from src.utils.logger import get_logger
 
 logger = get_logger("gui.main_window")
 
-_POLL_INTERVAL_MS = 500  # queue poll frequency
+_POLL_INTERVAL_MS = 500        # queue poll frequency
+_NOTIFY_DEBOUNCE_MS = 2000     # batch notification debounce
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +82,10 @@ class MainWindow(QMainWindow):
         self._current_event: Optional[FileEvent] = None
         self._ocr_worker: Optional[_OcrWorker] = None
         self._watcher = FolderWatcher()
+        self._pending_notify_count: int = 0  # for batched tray notifications
 
         self._setup_ui()
+        self._setup_tray()
         self._setup_watcher()
         self._setup_poll_timer()
 
@@ -94,6 +98,11 @@ class MainWindow(QMainWindow):
     def _setup_ui(self) -> None:
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(1200, 720)
+
+        # App icon
+        icon_path = BASE_DIR / "assets" / "icon.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -171,6 +180,72 @@ class MainWindow(QMainWindow):
         sb.addWidget(self._status_msg_label)
 
     # ------------------------------------------------------------------
+    # System tray
+    # ------------------------------------------------------------------
+
+    def _setup_tray(self) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray: Optional[QSystemTrayIcon] = None
+            return
+
+        self._tray = QSystemTrayIcon(self)
+        icon_path = BASE_DIR / "assets" / "icon.ico"
+        if icon_path.exists():
+            self._tray.setIcon(QIcon(str(icon_path)))
+        else:
+            self._tray.setIcon(self.style().standardIcon(
+                self.style().StandardPixmap.SP_ComputerIcon
+            ))
+        self._tray.setToolTip(APP_NAME)
+
+        tray_menu = QMenu()
+        show_action = tray_menu.addAction("Mostra finestra")
+        show_action.triggered.connect(self._bring_to_front)
+        tray_menu.addSeparator()
+        quit_action = tray_menu.addAction("Esci")
+        quit_action.triggered.connect(QApplication.quit)
+
+        self._tray.setContextMenu(tray_menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+        # Debounce timer: fires once after _NOTIFY_DEBOUNCE_MS with batch count
+        self._notify_timer = QTimer(self)
+        self._notify_timer.setSingleShot(True)
+        self._notify_timer.setInterval(_NOTIFY_DEBOUNCE_MS)
+        self._notify_timer.timeout.connect(self._send_batch_notification)
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._bring_to_front()
+
+    def _bring_to_front(self) -> None:
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _tray_notify(self, title: str, message: str) -> None:
+        if self._tray and self._tray.isVisible():
+            self._tray.showMessage(
+                title, message,
+                QSystemTrayIcon.MessageIcon.Information,
+                4000,
+            )
+
+    def _schedule_batch_notification(self) -> None:
+        """Increment pending count and (re)start the debounce timer."""
+        self._pending_notify_count += 1
+        self._notify_timer.start()
+
+    def _send_batch_notification(self) -> None:
+        count = self._pending_notify_count
+        self._pending_notify_count = 0
+        if count == 1:
+            self._tray_notify("DDT Scanner", "1 nuovo documento in coda")
+        elif count > 1:
+            self._tray_notify("DDT Scanner", f"{count} nuovi documenti in coda")
+
+    # ------------------------------------------------------------------
     # Watcher & polling
     # ------------------------------------------------------------------
 
@@ -180,7 +255,6 @@ class MainWindow(QMainWindow):
         elif self._user.role == "admin":
             for store in list_stores():
                 self._add_store_folders(store.id)
-
         self._watcher.start()
 
     def _add_store_folders(self, store_id: int) -> None:
@@ -195,13 +269,20 @@ class MainWindow(QMainWindow):
         self._poll_timer.start()
 
     def _poll_watcher(self) -> None:
+        new_files = 0
         while True:
             event = self._watcher.get()
             if event is None:
                 break
             self._queue_panel.add_file(event)
+            new_files += 1
+
+        if new_files:
             count = self._queue_panel.total_count()
-            self._set_status(f"Nuovo file: {event.path.name}  |  In coda: {count}")
+            self._set_status(f"In coda: {count} documento/i")
+            # Schedule a debounced tray notification
+            for _ in range(new_files):
+                self._schedule_batch_notification()
 
     # ------------------------------------------------------------------
     # File workflow
@@ -237,6 +318,7 @@ class MainWindow(QMainWindow):
         self._barcode_editor.set_loading(False)
         self._barcode_editor.set_enabled(True)
         self._set_status(f"Errore OCR: {message}")
+        logger.warning("OCR failed: %s", message)
 
     def _on_confirmed(self, barcodes: list[str]) -> None:
         if not self._current_event:
@@ -258,7 +340,15 @@ class MainWindow(QMainWindow):
                 barcodes=barcodes,
                 action="confirmed",
             )
-            self._finalize_action(event, f"Confermato: {event.path.name}  |  {len(barcodes)} barcode")
+            self._finalize_action(
+                event, f"Confermato: {event.path.name}  |  {len(barcodes)} barcode"
+            )
+        except PermissionError:
+            QMessageBox.warning(
+                self, "File bloccato",
+                "Il file è ancora bloccato dallo scanner.\n"
+                "Attendere qualche secondo e riprovare.",
+            )
         except Exception as exc:
             logger.error("Confirm error: %s", exc)
             QMessageBox.warning(self, "Errore", f"Impossibile spostare il file:\n{exc}")
@@ -283,6 +373,12 @@ class MainWindow(QMainWindow):
                 action="discarded",
             )
             self._finalize_action(event, f"Scartato: {event.path.name}")
+        except PermissionError:
+            QMessageBox.warning(
+                self, "File bloccato",
+                "Il file è ancora bloccato dallo scanner.\n"
+                "Attendere qualche secondo e riprovare.",
+            )
         except Exception as exc:
             logger.error("Discard error: %s", exc)
             QMessageBox.warning(self, "Errore", f"Impossibile spostare il file:\n{exc}")
@@ -301,7 +397,6 @@ class MainWindow(QMainWindow):
     def _on_logout(self) -> None:
         self._shutdown()
         self.close()
-        # Re-open login dialog
         from src.gui.login_dialog import LoginDialog
         dialog = LoginDialog()
         if dialog.exec() == LoginDialog.Accepted:
@@ -326,6 +421,12 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        # If tray is active, minimize to tray instead of quitting
+        if self._tray and self._tray.isVisible():
+            self.hide()
+            self._tray_notify(APP_NAME, "L'applicazione è ancora attiva nella barra delle applicazioni.")
+            event.ignore()
+            return
         self._shutdown()
         super().closeEvent(event)
 
@@ -335,6 +436,8 @@ class MainWindow(QMainWindow):
         if self._ocr_worker and self._ocr_worker.isRunning():
             self._ocr_worker.quit()
             self._ocr_worker.wait(2000)
+        if self._tray:
+            self._tray.hide()
 
     # ------------------------------------------------------------------
     # Helpers

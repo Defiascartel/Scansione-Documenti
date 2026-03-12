@@ -8,7 +8,9 @@ logs/
 .pytest_cache/
 build/
 dist/
+# Allow the project spec file; ignore only auto-generated PyInstaller specs
 *.spec
+!ddt_scanner.spec
 *.egg-info/
 .venv/
 venv/

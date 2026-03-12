@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,9 @@ from typing import Optional
 from src.utils.logger import get_logger
 
 logger = get_logger("utils.file_manager")
+
+_MOVE_MAX_ATTEMPTS = 4
+_MOVE_RETRY_DELAY = 1.5  # seconds between retries (file may still be locked by scanner)
 
 
 def _destination_root(source_folder: Path) -> Path:
@@ -151,10 +155,39 @@ def _move_file(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_file = _resolve_dest_path(dest_dir, source.name)
 
-    shutil.move(str(source), str(dest_file))
+    _move_with_retry(source, dest_file)
     logger.info("File %s → %s (%s)", source.name, dest_file, action)
 
     _write_sidecar(dest_file, barcodes=barcodes, username=username,
                    store_id=store_id, action=action)
 
     return dest_file
+
+
+def _move_with_retry(source: Path, dest: Path) -> None:
+    """Move *source* to *dest* with retry on PermissionError (file locked).
+
+    Args:
+        source: Source path.
+        dest: Destination path.
+
+    Raises:
+        PermissionError: If all attempts fail.
+        OSError: For other OS-level errors.
+    """
+    for attempt in range(1, _MOVE_MAX_ATTEMPTS + 1):
+        try:
+            shutil.move(str(source), str(dest))
+            return
+        except PermissionError as exc:
+            if attempt == _MOVE_MAX_ATTEMPTS:
+                logger.error(
+                    "Cannot move '%s' after %d attempts (file locked): %s",
+                    source.name, _MOVE_MAX_ATTEMPTS, exc,
+                )
+                raise
+            logger.warning(
+                "File '%s' locked (attempt %d/%d) — retrying in %.1fs…",
+                source.name, attempt, _MOVE_MAX_ATTEMPTS, _MOVE_RETRY_DELAY,
+            )
+            time.sleep(_MOVE_RETRY_DELAY)
