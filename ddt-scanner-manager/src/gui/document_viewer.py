@@ -1,11 +1,11 @@
 """Center panel — zoomable/pannable/rotatable document viewer."""
 
-from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QPixmap, QTransform, QWheelEvent
+from PySide6.QtCore import Qt, QRectF, QSize
+from PySide6.QtGui import QImage, QPainter, QPixmap, QTransform, QWheelEvent
+from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -133,24 +133,35 @@ class DocumentViewer(QWidget):
 
     def _load_pdf_first_page(self, path: Path) -> Optional[QPixmap]:
         try:
-            import pdf2image  # optional dependency
-
-            pages = pdf2image.convert_from_path(
-                str(path), dpi=150, first_page=1, last_page=1
-            )
-            if not pages:
+            doc = QPdfDocument(None)
+            error = doc.load(str(path))
+            if error != QPdfDocument.Error.None_ or doc.pageCount() == 0:
+                logger.warning("QPdfDocument could not open '%s' (error=%s)", path, error)
+                doc.close()
                 return None
 
-            buf = BytesIO()
-            pages[0].save(buf, format="PNG")
-            buf.seek(0)
-            pixmap = QPixmap()
-            pixmap.loadFromData(buf.read())
+            page_size = doc.pagePointSize(0)
+            scale = 150 / 72  # 150 dpi from 72-pt baseline
+            w = max(1, int(page_size.width() * scale))
+            h = max(1, int(page_size.height() * scale))
+
+            rendered = doc.render(0, QSize(w, h))
+            doc.close()  # Release file handle immediately after rendering
+
+            if rendered.isNull():
+                logger.warning("QPdfDocument.render returned null image for '%s'", path)
+                return None
+
+            # Composite onto white background (PDF transparent areas → black otherwise)
+            bg = QImage(w, h, QImage.Format.Format_RGB888)
+            bg.fill(0xFFFFFF)
+            painter = QPainter(bg)
+            painter.drawImage(0, 0, rendered)
+            painter.end()
+
+            pixmap = QPixmap.fromImage(bg)
             return pixmap if not pixmap.isNull() else None
 
-        except ImportError:
-            logger.warning("pdf2image not installed — cannot render PDF preview.")
-            return None
         except Exception as exc:
             logger.error("PDF render error for '%s': %s", path, exc)
             return None

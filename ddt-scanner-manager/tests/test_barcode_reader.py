@@ -99,30 +99,45 @@ def test_pil_to_cv2_palette():
 
 
 # ---------------------------------------------------------------------------
-# _decode_cv2 with mocked pyzbar
+# _decode_cv2 with mocked OpenCV BarcodeDetector
 # ---------------------------------------------------------------------------
 
-def _make_mock_decoded(value: bytes, barcode_type: str):
-    mock = MagicMock()
-    mock.data = value
-    mock.type = barcode_type
-    rect = MagicMock()
-    rect.left, rect.top, rect.width, rect.height = 10, 20, 100, 40
-    mock.rect = rect
-    return mock
+def _mock_opencv_detect(values: list[str], btype: str = "CODE_128"):
+    """Patch _cv_barcode_detector.detectAndDecodeMulti to return given values."""
+    import numpy as np
+    n = len(values)
+    # Build fake corner-point arrays (a 1×4×2 shape per barcode)
+    points = np.array([[[10, 20], [110, 20], [110, 60], [10, 60]]] * n, dtype=np.float32) if n else np.empty((0, 4, 2))
+    types = [btype] * n
+    return True if n else False, values, types, points
+
+
+def _make_mock_detector(values: list[str], btype: str = "CODE_128"):
+    """Return a mock BarcodeDetector whose detectAndDecodeMulti returns given values."""
+    import numpy as np
+    n = len(values)
+    pts = np.array([[[10, 20], [110, 20], [110, 60], [10, 60]]] * max(n, 1), dtype=np.float32)
+    mock_det = MagicMock()
+    # OpenCV return order: (retval, decoded_info, points, decoded_type)
+    mock_det.detectAndDecodeMulti.return_value = (
+        bool(n),
+        tuple(values),
+        pts[:n] if n else np.empty((0, 4, 2), dtype=np.float32),
+        tuple([btype] * n),
+    )
+    return mock_det
 
 
 def test_decode_cv2_returns_barcode_results():
     img = _white_image()
     cv = _pil_to_cv2(img)
 
-    mock_item = _make_mock_decoded(b"123456789", "CODE128")
-    with patch("src.ocr.barcode_reader.pyzbar.decode", return_value=[mock_item]):
+    with patch("src.ocr.barcode_reader._cv_barcode_detector", _make_mock_detector(["123456789"])):
         results = _decode_cv2(cv)
 
     assert len(results) == 1
     assert results[0].value == "123456789"
-    assert results[0].barcode_type == "CODE128"
+    assert results[0].barcode_type == "CODE_128"
     assert results[0].bounding_box == (10, 20, 100, 40)
 
 
@@ -131,30 +146,30 @@ def test_decode_cv2_deduplicates_via_caller():
     img = _white_image()
     cv = _pil_to_cv2(img)
 
-    mock_item = _make_mock_decoded(b"DUP", "EAN13")
-    with patch("src.ocr.barcode_reader.pyzbar.decode", return_value=[mock_item, mock_item]):
+    with patch("src.ocr.barcode_reader._cv_barcode_detector", _make_mock_detector(["DUP", "DUP"])):
         results = _decode_cv2(cv)
 
-    # Two identical items returned by pyzbar → _decode_cv2 returns both
     assert len(results) == 2
 
 
-def test_decode_cv2_handles_latin1_fallback():
+def test_decode_cv2_handles_empty_value_skipped():
+    """OpenCV returns empty string for undecodable detections — must be skipped."""
     img = _white_image()
     cv = _pil_to_cv2(img)
 
-    mock_item = _make_mock_decoded(b"\xff\xfe", "QRCODE")
-    with patch("src.ocr.barcode_reader.pyzbar.decode", return_value=[mock_item]):
+    with patch("src.ocr.barcode_reader._cv_barcode_detector", _make_mock_detector([""])):
         results = _decode_cv2(cv)
 
-    assert len(results) == 1  # should not raise
+    assert results == []
 
 
-def test_decode_cv2_pyzbar_exception_returns_empty():
+def test_decode_cv2_exception_returns_empty():
     img = _white_image()
     cv = _pil_to_cv2(img)
 
-    with patch("src.ocr.barcode_reader.pyzbar.decode", side_effect=Exception("boom")):
+    mock_det = MagicMock()
+    mock_det.detectAndDecodeMulti.side_effect = Exception("boom")
+    with patch("src.ocr.barcode_reader._cv_barcode_detector", mock_det):
         results = _decode_cv2(cv)
 
     assert results == []
@@ -168,13 +183,10 @@ def test_scan_pil_image_deduplicates():
     from src.ocr.barcode_reader import _scan_pil_image
 
     img = _white_image()
-    mock_item = _make_mock_decoded(b"UNIQUE", "CODE128")
 
-    # Return the same barcode from every strategy call
-    with patch("src.ocr.barcode_reader.pyzbar.decode", return_value=[mock_item]):
+    with patch("src.ocr.barcode_reader._cv_barcode_detector", _make_mock_detector(["UNIQUE"])):
         result = _scan_pil_image(img, page=0)
 
-    # Despite multiple strategies, dedup keeps only one entry
     assert len(result.barcodes) == 1
     assert result.barcodes[0].value == "UNIQUE"
 
@@ -183,25 +195,46 @@ def test_scan_pil_image_deduplicates():
 # PDF handling
 # ---------------------------------------------------------------------------
 
-def test_pdf_without_pdf2image_returns_error(tmp_path: Path):
-    pdf = tmp_path / "sample.pdf"
-    pdf.write_bytes(b"%PDF-1.4 fake")
+def _make_qpdf_class_mock(page_count: int, fail_load: bool = False):
+    """Return a (MockClass, mock_instance) pair for QPdfDocument.
 
-    with patch.dict("sys.modules", {"pdf2image": None}):
-        results = read_barcodes(pdf)
+    The mock class carries its own Error.None_ sentinel so that the equality
+    check inside _scan_pdf (``error != QPdfDocument.Error.None_``) works
+    correctly regardless of what the real enum value is.
+    """
+    from PySide6.QtGui import QImage
 
-    assert len(results) == 1
-    assert results[0].error is not None
+    mock_cls = MagicMock()
+    mock_doc = MagicMock()
+    mock_cls.return_value = mock_doc
+
+    # Make Error.None_ a consistent sentinel on the mock class
+    none_sentinel = mock_cls.Error.None_
+    fail_sentinel = mock_cls.Error.InvalidFileFormat
+
+    mock_doc.load.return_value = fail_sentinel if fail_load else none_sentinel
+    mock_doc.pageCount.return_value = page_count
+
+    page_size = MagicMock()
+    page_size.width.return_value = 595.0
+    page_size.height.return_value = 842.0
+    mock_doc.pagePointSize.return_value = page_size
+
+    white = QImage(100, 100, QImage.Format.Format_RGB888)
+    white.fill(0xFFFFFF)
+    mock_doc.render.return_value = white
+    mock_doc.close = MagicMock()
+
+    return mock_cls
 
 
-def test_pdf_conversion_error_returns_error(tmp_path: Path):
+def test_pdf_load_error_returns_error(tmp_path: Path):
     pdf = tmp_path / "bad.pdf"
     pdf.write_bytes(b"not a real pdf")
 
-    mock_pdf2image = MagicMock()
-    mock_pdf2image.convert_from_path.side_effect = Exception("conversion failed")
+    mock_cls = _make_qpdf_class_mock(page_count=0, fail_load=True)
 
-    with patch.dict("sys.modules", {"pdf2image": mock_pdf2image}):
+    with patch("src.ocr.barcode_reader.QPdfDocument", mock_cls):
         results = read_barcodes(pdf)
 
     assert len(results) == 1
@@ -212,11 +245,9 @@ def test_pdf_multi_page_returns_one_result_per_page(tmp_path: Path):
     pdf = tmp_path / "multi.pdf"
     pdf.write_bytes(b"%PDF-1.4 fake")
 
-    pages = [_white_image(), _white_image(), _white_image()]
-    mock_pdf2image = MagicMock()
-    mock_pdf2image.convert_from_path.return_value = pages
+    mock_cls = _make_qpdf_class_mock(page_count=3)
 
-    with patch.dict("sys.modules", {"pdf2image": mock_pdf2image}):
+    with patch("src.ocr.barcode_reader.QPdfDocument", mock_cls):
         with patch("src.ocr.barcode_reader.pyzbar.decode", return_value=[]):
             results = read_barcodes(pdf)
 

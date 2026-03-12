@@ -1,6 +1,5 @@
 """Barcode extraction from image and PDF files."""
 
-import io
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -10,6 +9,9 @@ import numpy as np
 from PIL import Image
 from pyzbar import pyzbar
 from pyzbar.pyzbar import ZBarSymbol
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QImage, QPainter
+from PySide6.QtPdf import QPdfDocument
 
 from src.utils.logger import get_logger
 
@@ -70,7 +72,7 @@ def read_barcodes(file_path: str | Path) -> list[ScanResult]:
 # ---------------------------------------------------------------------------
 
 def _scan_pdf(path: Path) -> list[ScanResult]:
-    """Convert each PDF page to an image and scan for barcodes.
+    """Convert each PDF page to an image via QPdfDocument and scan for barcodes.
 
     Args:
         path: Path to the PDF file.
@@ -78,24 +80,47 @@ def _scan_pdf(path: Path) -> list[ScanResult]:
     Returns:
         List of ScanResult, one per page.
     """
-    try:
-        import pdf2image  # optional dependency; imported lazily
-    except ImportError:
-        logger.error("pdf2image not installed — cannot process PDF files.")
-        return [ScanResult(error="pdf2image non installato. Installare con: pip install pdf2image")]
+    doc = QPdfDocument(None)
+    error = doc.load(str(path))
+    if error != QPdfDocument.Error.None_:
+        logger.error("QPdfDocument failed to load '%s': %s", path, error)
+        return [ScanResult(error=f"Errore apertura PDF: {error}")]
 
-    try:
-        pages = pdf2image.convert_from_path(str(path), dpi=200)
-    except Exception as exc:
-        logger.error("Failed to convert PDF '%s': %s", path, exc)
-        return [ScanResult(error=f"Errore conversione PDF: {exc}")]
+    page_count = doc.pageCount()
+    if page_count == 0:
+        return [ScanResult(error="PDF vuoto o non leggibile.")]
 
     results: list[ScanResult] = []
-    for page_num, pil_image in enumerate(pages, start=1):
-        result = _scan_pil_image(pil_image, page=page_num)
-        results.append(result)
-        logger.debug("PDF page %d/%d — found %d barcode(s).", page_num, len(pages), len(result.barcodes))
+    for page_num in range(page_count):
+        page_size = doc.pagePointSize(page_num)
+        scale = 400 / 72  # 400 dpi — match original scan resolution
+        w = max(1, int(page_size.width() * scale))
+        h = max(1, int(page_size.height() * scale))
 
+        qimage = doc.render(page_num, QSize(w, h))
+        if qimage.isNull():
+            results.append(ScanResult(error=f"Impossibile renderizzare pagina {page_num + 1}", page=page_num + 1))
+            continue
+
+        # Composite onto white background (PDF may have transparent areas → black in RGB)
+        bg = QImage(w, h, QImage.Format.Format_RGB888)
+        bg.fill(0xFFFFFF)
+        painter = QPainter(bg)
+        painter.drawImage(0, 0, qimage)
+        painter.end()
+
+        bytes_per_line = bg.bytesPerLine()
+        arr = np.frombuffer(bg.bits(), dtype=np.uint8).reshape((h, bytes_per_line))
+        arr = arr[:, : w * 3].reshape((h, w, 3)).copy()
+        pil_image = Image.fromarray(arr, "RGB")
+
+        result = _scan_pil_image(pil_image, page=page_num + 1)
+        results.append(result)
+        logger.debug(
+            "PDF page %d/%d — found %d barcode(s).", page_num + 1, page_count, len(result.barcodes)
+        )
+
+    doc.close()
     return results
 
 
@@ -122,8 +147,19 @@ def _scan_image_file(path: Path, page: int) -> ScanResult:
     return _scan_pil_image(pil_image, page=page)
 
 
+# Fraction of the image height to scan first (barcode is in the top third of DDT docs)
+_BARCODE_ROI_TOP_FRACTION = 1 / 3
+
+# Symbol types accepted for DDT barcodes; Code128 is standard, QR added as fallback
+_ACCEPTED_SYMBOLS = [ZBarSymbol.CODE128, ZBarSymbol.QRCODE]
+
+
 def _scan_pil_image(pil_image: Image.Image, page: int) -> ScanResult:
     """Scan a PIL Image for barcodes using multiple pre-processing strategies.
+
+    Scanning is attempted first on the top third of the image (where the
+    barcode is located on Unieuro DDT documents), then on the full image
+    as a fallback.
 
     Args:
         pil_image: PIL Image to scan.
@@ -132,19 +168,38 @@ def _scan_pil_image(pil_image: Image.Image, page: int) -> ScanResult:
     Returns:
         ScanResult with detected barcodes.
     """
-    # Convert PIL → OpenCV (BGR)
+    w, h = pil_image.size
+    roi_h = max(1, int(h * _BARCODE_ROI_TOP_FRACTION))
+    roi_image = pil_image.crop((0, 0, w, roi_h))
+
+    # First pass: top-third ROI only
+    barcodes = _run_strategies(roi_image)
+
+    # Second pass: full image (fallback — covers edge cases)
+    if not barcodes:
+        logger.debug("ROI pass found nothing on page %d — retrying full image.", page)
+        barcodes = _run_strategies(pil_image)
+
+    if not barcodes:
+        logger.debug("No barcodes found on page %d.", page)
+
+    return ScanResult(barcodes=barcodes, page=page)
+
+
+def _run_strategies(pil_image: Image.Image) -> list[BarcodeResult]:
+    """Try each pre-processing strategy in order and return the first non-empty result."""
     cv_image = _pil_to_cv2(pil_image)
-
-    barcodes: list[BarcodeResult] = []
     seen_values: set[str] = set()
+    barcodes: list[BarcodeResult] = []
 
-    # Try each pre-processing strategy in order; stop when barcodes are found
-    for strategy in (_preprocess_original, _preprocess_grayscale,
-                     _preprocess_adaptive_threshold, _preprocess_enhanced):
+    for strategy in (
+        _preprocess_original,
+        _preprocess_grayscale,
+        _preprocess_adaptive_threshold,
+        _preprocess_enhanced,
+    ):
         processed = strategy(cv_image)
-        raw_barcodes = _decode_cv2(processed)
-
-        for rb in raw_barcodes:
+        for rb in _decode_cv2(processed):
             if rb.value not in seen_values:
                 seen_values.add(rb.value)
                 barcodes.append(rb)
@@ -153,10 +208,7 @@ def _scan_pil_image(pil_image: Image.Image, page: int) -> ScanResult:
             logger.debug("Strategy '%s' found %d barcode(s).", strategy.__name__, len(barcodes))
             break
 
-    if not barcodes:
-        logger.debug("No barcodes found on page %d.", page)
-
-    return ScanResult(barcodes=barcodes, page=page)
+    return barcodes
 
 
 # ---------------------------------------------------------------------------
@@ -194,11 +246,14 @@ def _preprocess_enhanced(image: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Decode with pyzbar
+# Decode — primary: cv2.barcode.BarcodeDetector, fallback: pyzbar
 # ---------------------------------------------------------------------------
 
+_cv_barcode_detector = cv2.barcode.BarcodeDetector()
+
+
 def _decode_cv2(image: np.ndarray) -> list[BarcodeResult]:
-    """Run pyzbar on a cv2 image array.
+    """Decode barcodes using OpenCV BarcodeDetector.
 
     Args:
         image: Grayscale or BGR numpy array.
@@ -206,35 +261,82 @@ def _decode_cv2(image: np.ndarray) -> list[BarcodeResult]:
     Returns:
         List of BarcodeResult.
     """
-    # pyzbar works best with a PIL image
-    if len(image.shape) == 2:
-        pil = Image.fromarray(image)
-    else:
-        pil = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    return _decode_opencv(image)
+
+
+_CROP_PADDING = 30  # px padding around detected barcode region before pyzbar decode
+
+
+def _decode_opencv(image: np.ndarray) -> list[BarcodeResult]:
+    """Detect barcode regions with OpenCV, then decode each crop with pyzbar.
+
+    OpenCV BarcodeDetector is reliable at *locating* Code128 barcodes even
+    when it cannot fully decode them. pyzbar is then run on the tight crop,
+    where it performs much better than on the full-page image.
+    """
+    gray = image if len(image.shape) == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    img_h, img_w = gray.shape[:2]
 
     try:
-        decoded = pyzbar.decode(pil)
+        _ok, decoded_info, points, decoded_type = _cv_barcode_detector.detectAndDecodeMulti(gray)
+    except Exception as exc:
+        logger.warning("cv2.BarcodeDetector error: %s", exc)
+        return []
+
+    if points is None or len(points) == 0:
+        return []
+
+    results: list[BarcodeResult] = []
+    for i, pts in enumerate(points):
+        xs, ys = pts[:, 0], pts[:, 1]
+        bx = int(xs.min())
+        by = int(ys.min())
+        bw = int(xs.max()) - bx
+        bh = int(ys.max()) - by
+
+        # If OpenCV decoded it directly, use that value
+        if decoded_info and i < len(decoded_info) and decoded_info[i]:
+            btype = decoded_type[i] if decoded_type is not None and i < len(decoded_type) else "CODE_128"
+            results.append(BarcodeResult(value=decoded_info[i], barcode_type=btype, bounding_box=(bx, by, bw, bh)))
+            continue
+
+        # OpenCV found but couldn't decode — crop and hand off to pyzbar
+        x1 = max(0, bx - _CROP_PADDING)
+        y1 = max(0, by - _CROP_PADDING)
+        x2 = min(img_w, bx + bw + _CROP_PADDING)
+        y2 = min(img_h, by + bh + _CROP_PADDING)
+        crop = gray[y1:y2, x1:x2]
+
+        for item in _pyzbar_decode_gray(crop):
+            results.append(
+                BarcodeResult(
+                    value=item[0],
+                    barcode_type=item[1],
+                    bounding_box=(x1 + item[2], y1 + item[3], item[4], item[5]),
+                )
+            )
+
+    return results
+
+
+def _pyzbar_decode_gray(gray: np.ndarray) -> list[tuple]:
+    """Run pyzbar on a grayscale array; returns list of (value, type, x, y, w, h)."""
+    pil = Image.fromarray(gray)
+    try:
+        decoded = pyzbar.decode(pil, symbols=_ACCEPTED_SYMBOLS)
     except Exception as exc:
         logger.warning("pyzbar decode error: %s", exc)
         return []
 
-    results: list[BarcodeResult] = []
+    out = []
     for item in decoded:
         try:
             value = item.data.decode("utf-8")
         except UnicodeDecodeError:
             value = item.data.decode("latin-1", errors="replace")
-
-        rect = item.rect
-        results.append(
-            BarcodeResult(
-                value=value,
-                barcode_type=item.type,
-                bounding_box=(rect.left, rect.top, rect.width, rect.height),
-            )
-        )
-
-    return results
+        r = item.rect
+        out.append((value, item.type, r.left, r.top, r.width, r.height))
+    return out
 
 
 # ---------------------------------------------------------------------------

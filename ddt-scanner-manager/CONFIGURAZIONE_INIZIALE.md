@@ -158,4 +158,4 @@ Prima di chiudere il Pannello Admin, verificare:
 | "File bloccato dallo scanner" | Lo scanner sta ancora scrivendo | Attendere qualche secondo e cliccare di nuovo Conferma |
 | Nessun barcode rilevato | Scansione a bassa qualità o orientamento errato | Usare il pulsante **↻** per ruotare; inserire il barcode manualmente con **+ Aggiungi** |
 | Errore database all'avvio | Cartella `data\` non scrivibile | Verificare i permessi sulla cartella dell'applicazione |
-| Anteprima PDF non disponibile | Poppler non installato | Copiare la cartella `poppler\bin\` nella directory dell'applicazione |
+| Anteprima PDF non disponibile | Versione PySide6 senza modulo QtPdf | Aggiornare PySide6: `pip install --upgrade PySide6` |

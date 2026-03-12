@@ -26,9 +26,9 @@ File spostato in cartella "_confermati" + sidecar JSON
 |---|---|
 | Linguaggio | Python 3.11+ |
 | GUI | PySide6 (Qt6) |
-| Barcode detection | pyzbar + opencv-python |
+| Barcode detection | OpenCV BarcodeDetector + pyzbar |
 | Image processing | Pillow + opencv-python |
-| PDF support | pdf2image |
+| PDF rendering | QPdfDocument (PySide6.QtPdf) |
 | Database locale | SQLite |
 | File monitoring | watchdog |
 | Password hashing | bcrypt |
@@ -95,7 +95,7 @@ Cambiare la password subito dal Pannello Admin → tab Utenze.
 py -m pytest tests/ -v
 ```
 
-Risultato attuale: **40 test, tutti verdi**.
+Risultato attuale: **39 test, tutti verdi**.
 
 ## Build .exe
 
@@ -106,8 +106,8 @@ build.bat
 Output: `dist\DDT_Scanner_Manager\DDT_Scanner_Manager.exe`
 
 > **Prerequisiti build:**
-> - [Poppler per Windows](https://github.com/oschwartz10612/poppler-windows/releases) (per PDF) — copiare `bin\` in `dist\DDT_Scanner_Manager\`
 > - Le DLL zbar (`libzbar-64.dll`) sono incluse automaticamente se pyzbar è installato via pip
+> - Il rendering PDF usa `QPdfDocument` (incluso in PySide6) — nessuna dipendenza esterna richiesta
 
 ---
 
@@ -126,11 +126,14 @@ Output: `dist\DDT_Scanner_Manager\DDT_Scanner_Manager.exe`
 - Filtro automatico sulle estensioni supportate: JPG, JPEG, PNG, TIFF, BMP, PDF
 - Aggiunta/rimozione dinamica delle cartelle senza riavvio
 
-### OCR e rilevamento barcode
+### Rilevamento barcode
+- Strategia ibrida: OpenCV `BarcodeDetector` localizza il barcode, pyzbar decodifica il crop (massima affidabilità su Code128)
+- ROI intelligente: scansione prima del terzo superiore del documento, poi full-page come fallback
 - 4 strategie di pre-processing in cascata (originale → grayscale → adaptive threshold → sharpen+OTSU)
 - Deduplicazione barcode sulla stessa pagina
-- Supporto PDF multi-pagina via `pdf2image`
-- OCR eseguito in background thread (GUI mai bloccata)
+- Rendering PDF nativo via `QPdfDocument` (PySide6.QtPdf) a 400 DPI — nessuna dipendenza esterna (Poppler non richiesto)
+- Composizione su sfondo bianco per gestire trasparenze PDF
+- Scansione in background thread (GUI mai bloccata)
 
 ### Interfaccia operatore
 - Layout a 3 pannelli ridimensionabili: **coda** | **viewer** | **barcode editor**
