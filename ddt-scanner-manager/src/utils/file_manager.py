@@ -97,39 +97,47 @@ def move_to_confirmed(
     barcodes: list[str],
     username: str,
     store_id: Optional[int] = None,
+    dest_dir: str | Path | None = None,
 ) -> Path:
-    """Move a file to the ``_confermati`` folder and write a sidecar JSON.
+    """Move a file to the confirmed folder and write a sidecar JSON.
 
     Args:
         source_file: Absolute path of the file to move.
         barcodes: Confirmed barcode values.
         username: Operator username.
         store_id: Store id for the sidecar.
+        dest_dir: Explicit destination directory (OUT). Falls back to
+                  ``{source_folder}_confermati`` if not provided.
 
     Returns:
         Final path of the moved file.
     """
     return _move_file(source_file, action="confirmed",
-                      barcodes=barcodes, username=username, store_id=store_id)
+                      barcodes=barcodes, username=username, store_id=store_id,
+                      dest_dir=dest_dir)
 
 
 def move_to_discarded(
     source_file: str | Path,
     username: str,
     store_id: Optional[int] = None,
+    dest_dir: str | Path | None = None,
 ) -> Path:
-    """Move a file to the ``_scartati`` folder and write a sidecar JSON.
+    """Move a file to the discarded folder and write a sidecar JSON.
 
     Args:
         source_file: Absolute path of the file to move.
         username: Operator username.
         store_id: Store id for the sidecar.
+        dest_dir: Explicit destination directory (OUT). Falls back to
+                  ``{source_folder}_scartati`` if not provided.
 
     Returns:
         Final path of the moved file.
     """
     return _move_file(source_file, action="discarded",
-                      barcodes=[], username=username, store_id=store_id)
+                      barcodes=[], username=username, store_id=store_id,
+                      dest_dir=dest_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -142,18 +150,21 @@ def _move_file(
     barcodes: list[str],
     username: str,
     store_id: Optional[int],
+    dest_dir: str | Path | None = None,
 ) -> Path:
     source = Path(source_file)
     if not source.exists():
         raise FileNotFoundError(f"Source file not found: {source}")
 
-    if action == "confirmed":
-        dest_dir = _destination_root(source.parent)
+    if dest_dir:
+        resolved_dir = Path(dest_dir)
+    elif action == "confirmed":
+        resolved_dir = _destination_root(source.parent)
     else:
-        dest_dir = _discarded_root(source.parent)
+        resolved_dir = _discarded_root(source.parent)
 
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_file = _resolve_dest_path(dest_dir, source.name)
+    resolved_dir.mkdir(parents=True, exist_ok=True)
+    dest_file = _resolve_dest_path(resolved_dir, source.name)
 
     _move_with_retry(source, dest_file)
     logger.info("File %s → %s (%s)", source.name, dest_file, action)

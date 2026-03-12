@@ -71,10 +71,12 @@ def test_watched_folders_crud(isolated_db):
     isolated_db.create_store("001", "Test")
     store_id = isolated_db.list_stores()[0].id
 
-    fid = isolated_db.add_watched_folder(store_id, r"\\server\scansioni\001\acquisti", "acquisti")
+    fid = isolated_db.add_watched_folder(store_id, r"\\server\scansioni\001\acquisti",
+                                         r"\\server\scansioni\001\acquisti_out", "acquisti")
     folders = isolated_db.list_watched_folders(store_id)
     assert len(folders) == 1
     assert folders[0].folder_type == "acquisti"
+    assert folders[0].dest_path == r"\\server\scansioni\001\acquisti_out"
 
     isolated_db.remove_watched_folder(fid)
     assert isolated_db.list_watched_folders(store_id) == []

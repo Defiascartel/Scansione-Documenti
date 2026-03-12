@@ -260,7 +260,8 @@ class MainWindow(QMainWindow):
     def _add_store_folders(self, store_id: int) -> None:
         for folder in list_watched_folders(store_id):
             if folder.is_active:
-                self._watcher.add_folder(folder.source_path, folder.folder_type, store_id)
+                self._watcher.add_folder(folder.source_path, folder.folder_type, store_id,
+                                         dest_path=folder.dest_path)
 
     def _setup_poll_timer(self) -> None:
         self._poll_timer = QTimer(self)
@@ -336,6 +337,7 @@ class MainWindow(QMainWindow):
                 barcodes=barcodes,
                 username=self._user.username,
                 store_id=self._user.store_id,
+                dest_dir=event.dest_path if event.dest_path else None,
             )
             log_operation(
                 user_id=self._user.id,
@@ -368,6 +370,7 @@ class MainWindow(QMainWindow):
                 event.path,
                 username=self._user.username,
                 store_id=self._user.store_id,
+                dest_dir=event.dest_path if event.dest_path else None,
             )
             log_operation(
                 user_id=self._user.id,

@@ -26,6 +26,7 @@ class FileEvent:
     path: Path
     folder_type: str
     store_id: int
+    dest_path: Path
 
 
 @dataclass
@@ -35,6 +36,7 @@ class WatchedFolder:
     path: Path
     folder_type: str
     store_id: int
+    dest_path: Path
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +82,8 @@ class _DDTEventHandler(FileSystemEventHandler):
             if path.exists():
                 self._queue.put(
                     FileEvent(path=path, folder_type=self._watched.folder_type,
-                              store_id=self._watched.store_id)
+                              store_id=self._watched.store_id,
+                              dest_path=self._watched.dest_path)
                 )
                 logger.info("Queued: %s", path)
             else:
@@ -125,16 +128,19 @@ class FolderWatcher:
     # Public API
     # ------------------------------------------------------------------
 
-    def add_folder(self, path: str | Path, folder_type: str, store_id: int) -> None:
+    def add_folder(self, path: str | Path, folder_type: str, store_id: int,
+                   dest_path: str | Path = "") -> None:
         """Register a folder to monitor.
 
         Args:
-            path: Absolute path of the folder.
+            path: Absolute path of the folder (IN).
             folder_type: Descriptive type (e.g. 'acquisti').
             store_id: Associated store id.
+            dest_path: Absolute path of the destination folder (OUT).
         """
         resolved = Path(path)
-        wf = WatchedFolder(path=resolved, folder_type=folder_type, store_id=store_id)
+        wf = WatchedFolder(path=resolved, folder_type=folder_type, store_id=store_id,
+                           dest_path=Path(dest_path) if dest_path else resolved)
         with self._lock:
             # Avoid duplicates
             if any(f.path == resolved for f in self._folders):
@@ -247,7 +253,8 @@ class FolderWatcher:
                         self._seen.add(entry)
                     self._queue.put(
                         FileEvent(path=entry, folder_type=wf.folder_type,
-                                  store_id=wf.store_id)
+                                  store_id=wf.store_id,
+                                  dest_path=wf.dest_path)
                     )
                     logger.info("Polling queued: %s", entry)
         except PermissionError as exc:

@@ -250,7 +250,17 @@ class _FolderDialog(QDialog):
         self._browse_btn.clicked.connect(self._browse)
         path_row.addWidget(self._path_edit)
         path_row.addWidget(self._browse_btn)
-        layout.addRow("Percorso:", path_row)
+        layout.addRow("Cartella IN:", path_row)
+
+        dest_row = QHBoxLayout()
+        self._dest_edit = QLineEdit()
+        self._dest_edit.setPlaceholderText(r"\\server\scansioni\negozio_001\acquisti_confermati")
+        self._dest_browse_btn = QPushButton("…")
+        self._dest_browse_btn.setFixedWidth(30)
+        self._dest_browse_btn.clicked.connect(self._browse_dest)
+        dest_row.addWidget(self._dest_edit)
+        dest_row.addWidget(self._dest_browse_btn)
+        layout.addRow("Cartella OUT:", dest_row)
 
         self._type_edit = QLineEdit()
         self._type_edit.setPlaceholderText("es. acquisti, resi, altro")
@@ -275,17 +285,29 @@ class _FolderDialog(QDialog):
         return self._path_edit.text().strip()
 
     @property
+    def dest_path(self) -> str:
+        return self._dest_edit.text().strip()
+
+    @property
     def folder_type(self) -> str:
         return self._type_edit.text().strip()
 
     def _browse(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Seleziona cartella")
+        folder = QFileDialog.getExistingDirectory(self, "Seleziona cartella IN")
         if folder:
             self._path_edit.setText(folder)
 
+    def _browse_dest(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Seleziona cartella OUT")
+        if folder:
+            self._dest_edit.setText(folder)
+
     def _validate(self) -> None:
         if not self.path:
-            QMessageBox.warning(self, "Errore", "Il percorso è obbligatorio.")
+            QMessageBox.warning(self, "Errore", "Il percorso IN è obbligatorio.")
+            return
+        if not self.dest_path:
+            QMessageBox.warning(self, "Errore", "Il percorso OUT è obbligatorio.")
             return
         if not self.folder_type:
             QMessageBox.warning(self, "Errore", "Il tipo cartella è obbligatorio.")
@@ -293,15 +315,15 @@ class _FolderDialog(QDialog):
         if self.store_id is None:
             QMessageBox.warning(self, "Errore", "Seleziona un negozio.")
             return
-        p = Path(self.path)
-        if not p.exists():
-            reply = QMessageBox.question(
-                self, "Percorso non trovato",
-                f"Il percorso non esiste al momento:\n{self.path}\n\nAggiungere comunque?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply == QMessageBox.StandardButton.No:
-                return
+        for label, p in [("IN", self.path), ("OUT", self.dest_path)]:
+            if not Path(p).exists():
+                reply = QMessageBox.question(
+                    self, f"Percorso {label} non trovato",
+                    f"Il percorso non esiste al momento:\n{p}\n\nAggiungere comunque?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if reply == QMessageBox.StandardButton.No:
+                    return
         self.accept()
 
 
@@ -512,7 +534,7 @@ class _FoldersTab(QWidget):
         )
         layout.addLayout(btn_layout)
 
-        self._table = _make_table(["ID", "Percorso", "Tipo", "Attiva"])
+        self._table = _make_table(["ID", "Cartella IN", "Cartella OUT", "Tipo", "Attiva"])
         layout.addWidget(self._table)
 
         self._add_btn.clicked.connect(self._on_add)
@@ -546,9 +568,10 @@ class _FoldersTab(QWidget):
         for row, f in enumerate(folders):
             _set_cell(self._table, row, 0, str(f.id))
             _set_cell(self._table, row, 1, f.source_path)
-            _set_cell(self._table, row, 2, f.folder_type, bold=True)
+            _set_cell(self._table, row, 2, f.dest_path)
+            _set_cell(self._table, row, 3, f.folder_type, bold=True)
             active_text = "Sì" if f.is_active else "No"
-            _set_cell(self._table, row, 3, active_text,
+            _set_cell(self._table, row, 4, active_text,
                       color=QColor("#27ae60") if f.is_active else QColor("#e74c3c"))
         self._table.resizeColumnsToContents()
 
@@ -572,9 +595,10 @@ class _FoldersTab(QWidget):
                             parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             try:
-                add_watched_folder(dlg.store_id, dlg.path, dlg.folder_type)
+                add_watched_folder(dlg.store_id, dlg.path, dlg.dest_path, dlg.folder_type)
                 # Reload watcher dynamically
-                self._watcher.add_folder(dlg.path, dlg.folder_type, dlg.store_id)
+                self._watcher.add_folder(dlg.path, dlg.folder_type, dlg.store_id,
+                                         dest_path=dlg.dest_path)
                 self._refresh_folders()
                 self.folders_changed.emit()
                 logger.info("Admin added watched folder: %s", dlg.path)

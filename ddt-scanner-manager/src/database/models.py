@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS watched_folders (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     store_id    INTEGER NOT NULL REFERENCES stores(id),
     source_path TEXT    NOT NULL,
+    dest_path   TEXT    NOT NULL DEFAULT '',
     folder_type TEXT    NOT NULL,
     is_active   INTEGER NOT NULL DEFAULT 1
 );
@@ -54,5 +55,15 @@ def create_tables(conn: sqlite3.Connection) -> None:
         conn: Open SQLite connection.
     """
     conn.executescript(DDL)
+    _migrate(conn)
     conn.commit()
     logger.debug("Database tables ensured.")
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Apply incremental schema migrations for existing databases."""
+    # v1 → v2: add dest_path column to watched_folders
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(watched_folders)").fetchall()}
+    if "dest_path" not in cols:
+        conn.execute("ALTER TABLE watched_folders ADD COLUMN dest_path TEXT NOT NULL DEFAULT ''")
+        logger.info("Migration: added 'dest_path' column to watched_folders.")

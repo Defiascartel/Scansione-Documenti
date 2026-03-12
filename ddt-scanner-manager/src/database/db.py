@@ -40,6 +40,7 @@ class WatchedFolder:
     id: int
     store_id: int
     source_path: str
+    dest_path: str
     folder_type: str
     is_active: bool
 
@@ -299,12 +300,13 @@ def delete_store(store_id: int) -> None:
 # Watched Folders CRUD
 # ---------------------------------------------------------------------------
 
-def add_watched_folder(store_id: int, source_path: str, folder_type: str) -> int:
+def add_watched_folder(store_id: int, source_path: str, dest_path: str, folder_type: str) -> int:
     """Add a monitored folder for a store.
 
     Args:
         store_id: Associated store id.
-        source_path: Absolute path of the folder to watch.
+        source_path: Absolute path of the folder to watch (IN).
+        dest_path: Absolute path of the destination folder (OUT).
         folder_type: Descriptive type (e.g. 'acquisti', 'resi').
 
     Returns:
@@ -312,8 +314,8 @@ def add_watched_folder(store_id: int, source_path: str, folder_type: str) -> int
     """
     with get_connection() as conn:
         cursor = conn.execute(
-            "INSERT INTO watched_folders (store_id, source_path, folder_type) VALUES (?, ?, ?)",
-            (store_id, source_path, folder_type),
+            "INSERT INTO watched_folders (store_id, source_path, dest_path, folder_type) VALUES (?, ?, ?, ?)",
+            (store_id, source_path, dest_path, folder_type),
         )
         conn.commit()
         return cursor.lastrowid
@@ -330,14 +332,15 @@ def list_watched_folders(store_id: int) -> list[WatchedFolder]:
     """
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT id, store_id, source_path, folder_type, is_active "
+            "SELECT id, store_id, source_path, dest_path, folder_type, is_active "
             "FROM watched_folders WHERE store_id = ?",
             (store_id,),
         ).fetchall()
     return [
         WatchedFolder(
             id=r["id"], store_id=r["store_id"], source_path=r["source_path"],
-            folder_type=r["folder_type"], is_active=bool(r["is_active"])
+            dest_path=r["dest_path"], folder_type=r["folder_type"],
+            is_active=bool(r["is_active"])
         )
         for r in rows
     ]
