@@ -163,6 +163,10 @@ def _move_file(
     else:
         resolved_dir = _discarded_root(source.parent)
 
+    # Organise into a date-based subfolder (YYYYMMDD)
+    date_folder = datetime.now().strftime("%Y%m%d")
+    resolved_dir = resolved_dir / date_folder
+
     resolved_dir.mkdir(parents=True, exist_ok=True)
 
     # Confirmed files are renamed to their barcode values

@@ -1,11 +1,14 @@
 """Unit tests for file_manager utilities."""
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from src.utils.file_manager import move_to_confirmed, move_to_discarded
+
+_TODAY = datetime.now().strftime("%Y%m%d")
 
 
 @pytest.fixture()
@@ -21,7 +24,8 @@ def scan_file(tmp_path: Path) -> Path:
 def test_move_to_confirmed_moves_file(scan_file: Path):
     dest = move_to_confirmed(scan_file, barcodes=["123456"], username="mario", store_id=1)
     assert dest.exists()
-    assert dest.parent.name == "acquisti_confermati"
+    assert dest.parent.name == _TODAY
+    assert dest.parent.parent.name == "acquisti_confermati"
     assert not scan_file.exists()
 
 
@@ -39,7 +43,8 @@ def test_move_to_confirmed_creates_sidecar(scan_file: Path):
 def test_move_to_discarded_moves_file(scan_file: Path):
     dest = move_to_discarded(scan_file, username="luigi", store_id=2)
     assert dest.exists()
-    assert dest.parent.name == "acquisti_scartati"
+    assert dest.parent.name == _TODAY
+    assert dest.parent.parent.name == "acquisti_scartati"
     assert not scan_file.exists()
 
 
@@ -55,9 +60,9 @@ def test_collision_resolved_with_timestamp(tmp_path: Path):
     source_dir = tmp_path / "resi"
     source_dir.mkdir()
 
-    # Pre-create a file with the same name in _confermati
-    confirmed_dir = tmp_path / "resi_confermati"
-    confirmed_dir.mkdir()
+    # Pre-create a file with the same name in _confermati/YYYYMMDD
+    confirmed_dir = tmp_path / "resi_confermati" / _TODAY
+    confirmed_dir.mkdir(parents=True)
     (confirmed_dir / "ddt.jpg").write_bytes(b"existing")
 
     f = source_dir / "ddt.jpg"
@@ -82,5 +87,5 @@ def test_destination_dir_created_automatically(tmp_path: Path):
     f.write_bytes(b"\x89PNG")
 
     dest = move_to_confirmed(f, barcodes=[], username="u", store_id=1)
-    assert (tmp_path / "altro_confermati").is_dir()
+    assert (tmp_path / "altro_confermati" / _TODAY).is_dir()
     assert dest.exists()
