@@ -46,16 +46,23 @@ _NOTIFY_DEBOUNCE_MS = 2000     # batch notification debounce
 class _OcrWorker(QThread):
     """Runs barcode detection in a background thread."""
 
-    finished: Signal = Signal(list)   # list[str] — deduplicated barcode values
+    result_ready: Signal = Signal(list)   # list[str] — deduplicated barcode values
     error: Signal = Signal(str)
 
     def __init__(self, path: Path, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._path = path
+        self._aborted = False
+
+    def abort(self) -> None:
+        """Signal the worker to stop (best-effort; OCR itself is not interruptible)."""
+        self._aborted = True
 
     def run(self) -> None:
         try:
             scan_results = read_barcodes(self._path)
+            if self._aborted:
+                return  # thread ends naturally → QThread cleanup is safe
             seen: set[str] = set()
             values: list[str] = []
             for sr in scan_results:
@@ -63,8 +70,10 @@ class _OcrWorker(QThread):
                     if br.value not in seen:
                         seen.add(br.value)
                         values.append(br.value)
-            self.finished.emit(values)
+            self.result_ready.emit(values)
         except Exception as exc:
+            if self._aborted:
+                return
             logger.error("OCR error for '%s': %s", self._path, exc)
             self.error.emit(str(exc))
 
@@ -81,6 +90,7 @@ class MainWindow(QMainWindow):
         self._user = user
         self._current_event: Optional[FileEvent] = None
         self._ocr_worker: Optional[_OcrWorker] = None
+        self._old_workers: list[_OcrWorker] = []  # keep refs until finished
         self._watcher = FolderWatcher()
         self._pending_notify_count: int = 0  # for batched tray notifications
 
@@ -296,19 +306,23 @@ class MainWindow(QMainWindow):
         self._barcode_editor.set_loading(True)
         self._set_status(f"Analisi in corso: {event.path.name}…")
 
-        # Abort previous worker: disconnect signals first to avoid stale callbacks
+        # Abort previous worker: disconnect signals, mark aborted, let it finish safely
         if self._ocr_worker:
             try:
-                self._ocr_worker.finished.disconnect()
+                self._ocr_worker.result_ready.disconnect()
                 self._ocr_worker.error.disconnect()
             except RuntimeError:
                 pass  # already disconnected
             if self._ocr_worker.isRunning():
-                self._ocr_worker.quit()
-                self._ocr_worker.wait(1000)
+                self._ocr_worker.abort()
+                # Keep a reference so it isn't destroyed while still running;
+                # QThread.finished (built-in) fires when run() returns.
+                old = self._ocr_worker
+                old.finished.connect(lambda: self._cleanup_old_worker(old))
+                self._old_workers.append(old)
 
         self._ocr_worker = _OcrWorker(event.path)
-        self._ocr_worker.finished.connect(self._on_ocr_finished)
+        self._ocr_worker.result_ready.connect(self._on_ocr_finished)
         self._ocr_worker.error.connect(self._on_ocr_error)
         self._ocr_worker.start()
 
@@ -326,6 +340,13 @@ class MainWindow(QMainWindow):
         self._barcode_editor.set_enabled(True)
         self._set_status(f"Errore OCR: {message}")
         logger.warning("OCR failed: %s", message)
+
+    def _cleanup_old_worker(self, worker: _OcrWorker) -> None:
+        """Remove a finished old worker from the keep-alive list."""
+        try:
+            self._old_workers.remove(worker)
+        except ValueError:
+            pass
 
     def _on_confirmed(self, barcodes: list[str]) -> None:
         if not self._current_event:
@@ -444,16 +465,21 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_notify_timer"):
             self._notify_timer.stop()
         self._watcher.stop()
+        # Stop current OCR worker
         if self._ocr_worker:
             try:
-                self._ocr_worker.finished.disconnect()
+                self._ocr_worker.result_ready.disconnect()
                 self._ocr_worker.error.disconnect()
             except RuntimeError:
                 pass
             if self._ocr_worker.isRunning():
-                self._ocr_worker.quit()
-                if not self._ocr_worker.wait(2000):
+                self._ocr_worker.abort()
+                if not self._ocr_worker.wait(3000):
                     logger.warning("OCR worker did not stop within timeout.")
+        # Wait for any old workers still finishing
+        for w in self._old_workers:
+            w.wait(2000)
+        self._old_workers.clear()
         if self._tray:
             self._tray.hide()
 
