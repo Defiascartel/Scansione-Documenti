@@ -63,6 +63,8 @@ def read_barcodes(file_path: str | Path) -> list[ScanResult]:
 
     if ext == ".pdf":
         return _scan_pdf(path)
+    elif ext in (".tif", ".tiff"):
+        return _scan_tiff(path)
     else:
         return [_scan_image_file(path, page=0)]
 
@@ -121,6 +123,45 @@ def _scan_pdf(path: Path) -> list[ScanResult]:
         )
 
     doc.close()
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Multi-page TIFF handling
+# ---------------------------------------------------------------------------
+
+def _scan_tiff(path: Path) -> list[ScanResult]:
+    """Iterate over all frames in a (possibly multi-page) TIFF and scan each.
+
+    Args:
+        path: Path to the TIFF file.
+
+    Returns:
+        List of ScanResult, one per frame/page.
+    """
+    try:
+        pil_image = Image.open(path)
+    except Exception as exc:
+        logger.error("Cannot open TIFF '%s': %s", path, exc)
+        return [ScanResult(error=f"Impossibile aprire il TIFF: {exc}")]
+
+    results: list[ScanResult] = []
+    frame = 0
+    while True:
+        try:
+            pil_image.seek(frame)
+        except EOFError:
+            break
+        # Copy the current frame so it survives seek()
+        frame_image = pil_image.copy()
+        result = _scan_pil_image(frame_image, page=frame + 1)
+        results.append(result)
+        logger.debug("TIFF frame %d — found %d barcode(s).", frame + 1, len(result.barcodes))
+        frame += 1
+
+    if not results:
+        return [ScanResult(error="TIFF vuoto o non leggibile.")]
+
     return results
 
 
