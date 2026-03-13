@@ -1,4 +1,4 @@
-"""File movement and sidecar JSON creation."""
+"""File movement, format conversion, and sidecar JSON creation."""
 
 import json
 import shutil
@@ -7,6 +7,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import img2pdf
+import numpy as np
+from PIL import Image
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QImage, QPainter
+from PySide6.QtPdf import QPdfDocument
+
+from src.database.db import get_setting
 from src.utils.logger import get_logger
 
 logger = get_logger("utils.file_manager")
@@ -141,6 +149,168 @@ def move_to_discarded(
 
 
 # ---------------------------------------------------------------------------
+# Format conversion
+# ---------------------------------------------------------------------------
+
+# Extensions that map to each target format
+_PDF_EXTENSIONS = {".pdf"}
+_TIF_EXTENSIONS = {".tif", ".tiff"}
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
+_CONVERT_DPI = 300  # render resolution for PDF → image conversion
+
+
+def _convert_if_needed(source: Path, target_format: str) -> Path:
+    """Convert *source* to *target_format* if necessary.
+
+    Args:
+        source: Path to the original file.
+        target_format: ``"same"``, ``"pdf"`` or ``"tif"``.
+
+    Returns:
+        Path to the (possibly converted) file.  If no conversion is needed
+        the original *source* is returned unchanged.  Converted files are
+        written next to the source with the new extension.
+    """
+    if target_format == "same":
+        return source
+
+    ext = source.suffix.lower()
+
+    if target_format == "pdf":
+        if ext in _PDF_EXTENSIONS:
+            return source  # already PDF
+        return _convert_to_pdf(source)
+
+    if target_format == "tif":
+        if ext in _TIF_EXTENSIONS:
+            return source  # already TIF
+        return _convert_to_tif(source)
+
+    logger.warning("Unknown target format '%s' — skipping conversion.", target_format)
+    return source
+
+
+def _convert_to_pdf(source: Path) -> Path:
+    """Convert an image or TIFF file to PDF using img2pdf (lossless).
+
+    Args:
+        source: Path to the image/TIFF file.
+
+    Returns:
+        Path to the generated PDF (next to source).
+    """
+    dest = source.with_suffix(".pdf")
+    ext = source.suffix.lower()
+
+    # For multi-page TIFF, extract all frames first
+    if ext in _TIF_EXTENSIONS:
+        frames = _tiff_frames_as_jpeg_bytes(source)
+    else:
+        # Single image — img2pdf handles jpg/png/bmp directly
+        frames = [source.read_bytes()]
+
+    pdf_bytes = img2pdf.convert(frames)
+    dest.write_bytes(pdf_bytes)
+    logger.info("Converted '%s' → '%s'.", source.name, dest.name)
+
+    # Remove original since we'll move the converted file
+    if dest != source:
+        source.unlink(missing_ok=True)
+    return dest
+
+
+def _tiff_frames_as_jpeg_bytes(source: Path) -> list[bytes]:
+    """Extract all frames from a TIFF as JPEG byte strings for img2pdf."""
+    import io
+
+    pil = Image.open(source)
+    frames: list[bytes] = []
+    frame_idx = 0
+    while True:
+        try:
+            pil.seek(frame_idx)
+        except EOFError:
+            break
+        buf = io.BytesIO()
+        pil.copy().convert("RGB").save(buf, format="JPEG", quality=95)
+        frames.append(buf.getvalue())
+        frame_idx += 1
+    return frames
+
+
+def _convert_to_tif(source: Path) -> Path:
+    """Convert a PDF or image file to multi-page TIFF.
+
+    Args:
+        source: Path to the file.
+
+    Returns:
+        Path to the generated TIFF.
+    """
+    ext = source.suffix.lower()
+    dest = source.with_suffix(".tif")
+
+    if ext in _PDF_EXTENSIONS:
+        pages = _pdf_pages_as_pil(source)
+    else:
+        # Single image
+        pages = [Image.open(source).convert("RGB")]
+
+    if not pages:
+        logger.error("No pages extracted from '%s' — skipping conversion.", source.name)
+        return source
+
+    # Save as multi-page TIFF
+    if len(pages) == 1:
+        pages[0].save(dest, format="TIFF", compression="tiff_deflate")
+    else:
+        pages[0].save(
+            dest, format="TIFF", compression="tiff_deflate",
+            save_all=True, append_images=pages[1:],
+        )
+
+    logger.info("Converted '%s' → '%s'.", source.name, dest.name)
+    if dest != source:
+        source.unlink(missing_ok=True)
+    return dest
+
+
+def _pdf_pages_as_pil(source: Path) -> list[Image.Image]:
+    """Render each PDF page to a PIL Image via QPdfDocument."""
+    doc = QPdfDocument(None)
+    error = doc.load(str(source))
+    if error != QPdfDocument.Error.None_:
+        logger.error("Cannot open PDF '%s' for conversion: %s", source, error)
+        return []
+
+    pages: list[Image.Image] = []
+    scale = _CONVERT_DPI / 72
+    for page_num in range(doc.pageCount()):
+        page_size = doc.pagePointSize(page_num)
+        w = max(1, int(page_size.width() * scale))
+        h = max(1, int(page_size.height() * scale))
+
+        qimage = doc.render(page_num, QSize(w, h))
+        if qimage.isNull():
+            continue
+
+        # Composite onto white background
+        bg = QImage(w, h, QImage.Format.Format_RGB888)
+        bg.fill(0xFFFFFF)
+        painter = QPainter(bg)
+        painter.drawImage(0, 0, qimage)
+        painter.end()
+
+        bpl = bg.bytesPerLine()
+        arr = np.frombuffer(bg.bits(), dtype=np.uint8).reshape((h, bpl))
+        arr = arr[:, : w * 3].reshape((h, w, 3)).copy()
+        pages.append(Image.fromarray(arr, "RGB"))
+
+    doc.close()
+    return pages
+
+
+# ---------------------------------------------------------------------------
 # Internal
 # ---------------------------------------------------------------------------
 
@@ -168,6 +338,10 @@ def _move_file(
     resolved_dir = resolved_dir / date_folder
 
     resolved_dir.mkdir(parents=True, exist_ok=True)
+
+    # Convert file format if the admin configured a target format
+    output_format = get_setting("output_format", "same")
+    source = _convert_if_needed(source, output_format)
 
     # Confirmed files are renamed to their barcode values
     if action == "confirmed" and barcodes:

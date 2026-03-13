@@ -452,3 +452,38 @@ def list_operation_log(
         )
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    """Read a setting value from the settings table.
+
+    Args:
+        key: Setting key.
+        default: Value to return if the key does not exist.
+
+    Returns:
+        The setting value, or *default* if not found.
+    """
+    with get_connection() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    """Insert or update a setting in the settings table.
+
+    Args:
+        key: Setting key.
+        value: Setting value.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        conn.commit()

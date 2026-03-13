@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS watched_folders (
     is_active   INTEGER NOT NULL DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key     TEXT PRIMARY KEY,
+    value   TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS operation_log (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id        INTEGER REFERENCES users(id),
@@ -67,3 +72,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "dest_path" not in cols:
         conn.execute("ALTER TABLE watched_folders ADD COLUMN dest_path TEXT NOT NULL DEFAULT ''")
         logger.info("Migration: added 'dest_path' column to watched_folders.")
+
+    # v2 → v3: add settings table
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "settings" not in tables:
+        conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        logger.info("Migration: created 'settings' table.")

@@ -3,12 +3,25 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from PIL import Image
 
-from src.utils.file_manager import move_to_confirmed, move_to_discarded
+from src.utils.file_manager import (
+    _convert_if_needed,
+    move_to_confirmed,
+    move_to_discarded,
+)
 
 _TODAY = datetime.now().strftime("%Y%m%d")
+
+
+@pytest.fixture(autouse=True)
+def _mock_output_format():
+    """Default to 'same' format so existing tests don't hit the DB."""
+    with patch("src.utils.file_manager.get_setting", return_value="same"):
+        yield
 
 
 @pytest.fixture()
@@ -88,4 +101,71 @@ def test_destination_dir_created_automatically(tmp_path: Path):
 
     dest = move_to_confirmed(f, barcodes=[], username="u", store_id=1)
     assert (tmp_path / "altro_confermati" / _TODAY).is_dir()
+    assert dest.exists()
+
+
+# ---------------------------------------------------------------------------
+# Format conversion tests
+# ---------------------------------------------------------------------------
+
+def _make_test_image(path: Path, fmt: str = "JPEG") -> Path:
+    """Create a small real image file for conversion tests."""
+    img = Image.new("RGB", (100, 50), color="red")
+    img.save(path, format=fmt)
+    return path
+
+
+def test_convert_same_returns_unchanged(tmp_path: Path):
+    f = _make_test_image(tmp_path / "img.jpg")
+    result = _convert_if_needed(f, "same")
+    assert result == f
+    assert result.exists()
+
+
+def test_convert_jpg_to_pdf(tmp_path: Path):
+    f = _make_test_image(tmp_path / "img.jpg")
+    result = _convert_if_needed(f, "pdf")
+    assert result.suffix == ".pdf"
+    assert result.exists()
+    assert not f.exists()  # original removed
+
+
+def test_convert_jpg_to_tif(tmp_path: Path):
+    f = _make_test_image(tmp_path / "img.jpg")
+    result = _convert_if_needed(f, "tif")
+    assert result.suffix == ".tif"
+    assert result.exists()
+    assert not f.exists()
+
+
+def test_convert_tif_to_pdf(tmp_path: Path):
+    f = _make_test_image(tmp_path / "img.tif", fmt="TIFF")
+    result = _convert_if_needed(f, "pdf")
+    assert result.suffix == ".pdf"
+    assert result.exists()
+
+
+def test_convert_pdf_skipped_when_already_pdf(tmp_path: Path):
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-1.4 fake")
+    result = _convert_if_needed(f, "pdf")
+    assert result == f  # no conversion
+
+
+def test_convert_tif_skipped_when_already_tif(tmp_path: Path):
+    f = _make_test_image(tmp_path / "img.tif", fmt="TIFF")
+    result = _convert_if_needed(f, "tif")
+    assert result == f  # no conversion
+
+
+def test_move_to_confirmed_with_format_conversion(tmp_path: Path):
+    """Integration: move_to_confirmed should convert when setting is set."""
+    source_dir = tmp_path / "acquisti"
+    source_dir.mkdir()
+    f = _make_test_image(source_dir / "ddt.jpg")
+
+    with patch("src.utils.file_manager.get_setting", return_value="pdf"):
+        dest = move_to_confirmed(f, barcodes=["999"], username="u", store_id=1)
+
+    assert dest.suffix == ".pdf"
     assert dest.exists()

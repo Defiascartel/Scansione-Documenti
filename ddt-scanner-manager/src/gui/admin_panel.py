@@ -1,4 +1,4 @@
-"""Admin panel — 4-tab dialog for managing stores, users, folders and log."""
+"""Admin panel — 5-tab dialog for managing stores, users, folders, log and settings."""
 
 import json
 from pathlib import Path
@@ -34,12 +34,14 @@ from src.database.db import (
     create_store,
     create_user,
     delete_store,
+    get_setting,
     list_operation_log,
     list_stores,
     list_users,
     list_watched_folders,
     add_watched_folder,
     remove_watched_folder,
+    set_setting,
     update_store,
     update_user,
 )
@@ -716,6 +718,55 @@ class _LogTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Settings tab
+# ---------------------------------------------------------------------------
+
+_OUTPUT_FORMAT_OPTIONS = [
+    ("Stesso formato dell'input", "same"),
+    ("PDF", "pdf"),
+    ("TIFF", "tif"),
+]
+
+
+class _SettingsTab(QWidget):
+    """Global application settings."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(16)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        self._format_combo = QComboBox()
+        for label, value in _OUTPUT_FORMAT_OPTIONS:
+            self._format_combo.addItem(label, value)
+
+        # Load current value
+        current = get_setting("output_format", "same")
+        for i, (_, value) in enumerate(_OUTPUT_FORMAT_OPTIONS):
+            if value == current:
+                self._format_combo.setCurrentIndex(i)
+                break
+
+        self._format_combo.currentIndexChanged.connect(self._on_format_changed)
+        form.addRow("Formato file di output:", self._format_combo)
+
+        layout.addLayout(form)
+        layout.addStretch()
+
+    def _on_format_changed(self) -> None:
+        value = self._format_combo.currentData()
+        set_setting("output_format", value)
+        logger.info("Output format setting changed to '%s'.", value)
+
+
+# ---------------------------------------------------------------------------
 # Main admin panel dialog
 # ---------------------------------------------------------------------------
 
@@ -747,11 +798,13 @@ class AdminPanel(QDialog):
         self._users_tab = _UsersTab()
         self._folders_tab = _FoldersTab(watcher=self._watcher)
         self._log_tab = _LogTab()
+        self._settings_tab = _SettingsTab()
 
         self._tabs.addTab(self._stores_tab, "Negozi")
         self._tabs.addTab(self._users_tab, "Utenze")
         self._tabs.addTab(self._folders_tab, "Cartelle")
         self._tabs.addTab(self._log_tab, "Log Operazioni")
+        self._tabs.addTab(self._settings_tab, "Impostazioni")
 
         layout.addWidget(self._tabs)
 
