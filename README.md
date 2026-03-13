@@ -70,7 +70,8 @@ ddt-scanner-manager/
 │   │   └── styles.py             # Stylesheet QSS globale
 │   └── utils/
 │       ├── file_manager.py       # Spostamento file + sidecar JSON
-│       └── logger.py             # Logging su file con rotazione
+│       ├── logger.py             # Logging su file con rotazione
+│       └── pdf_renderer.py       # Rendering PDF via QPdfDocument
 ├── tests/
 │   ├── test_db.py
 │   ├── test_barcode_reader.py
