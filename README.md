@@ -29,7 +29,7 @@ Operatore vede documento + barcode estratti
     ↓
 Operatore corregge (se necessario) e conferma
     ↓
-File rinominato con barcode e spostato in cartella OUT + sidecar JSON
+File rinominato con barcode e spostato in cartella OUT + sidecar JSON (opzionale)
 ```
 
 ## Stack tecnologico
@@ -108,8 +108,6 @@ Cambiare la password subito dal Pannello Admin → tab Utenze.
 py -m pytest tests/ -v
 ```
 
-Risultato attuale: **39 test, tutti verdi**.
-
 ## Build .exe
 
 ```bash
@@ -186,18 +184,6 @@ Output: `dist\DDT_Scanner_Manager.exe` (singolo file, ~105 MB)
       └── ...
 ```
 
-## Fasi di sviluppo
-
-| Fase | Descrizione | Stato |
-|---|---|---|
-| 0 | Scaffolding | Completata |
-| 1 | Database e autenticazione | Completata |
-| 2 | OCR / Barcode | Completata |
-| 3 | File Watcher + File Manager | Completata |
-| 4 | GUI base (login + finestra principale 3 pannelli) | Completata |
-| 5 | Pannello Admin | Completata |
-| 6 | Integrazione, polish, system tray, stylesheet | Completata |
-| 7 | Build .exe con PyInstaller | Completata |
 
 ## Evoluzioni future (V2)
 
