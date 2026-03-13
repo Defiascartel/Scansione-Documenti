@@ -1,5 +1,6 @@
 """File movement, format conversion, and sidecar JSON creation."""
 
+import io
 import json
 import shutil
 import time
@@ -8,14 +9,12 @@ from pathlib import Path
 from typing import Optional
 
 import img2pdf
-import numpy as np
 from PIL import Image
-from PySide6.QtCore import QSize
-from PySide6.QtGui import QImage, QPainter
-from PySide6.QtPdf import QPdfDocument
 
+from src.config import PDF_EXTENSIONS, TIF_EXTENSIONS
 from src.database.db import get_setting
 from src.utils.logger import get_logger
+from src.utils.pdf_renderer import open_pdf, render_page_to_pil
 
 logger = get_logger("utils.file_manager")
 
@@ -23,30 +22,17 @@ _MOVE_MAX_ATTEMPTS = 4
 _MOVE_RETRY_DELAY = 1.5  # seconds between retries (file may still be locked by scanner)
 
 
-def _destination_root(source_folder: Path) -> Path:
-    """Derive the confirmed destination root from a source folder path.
-
-    Appends ``_confermati`` to the source folder name.
+def _derived_root(source_folder: Path, suffix: str) -> Path:
+    """Derive an output directory by appending *suffix* to the source folder name.
 
     Args:
         source_folder: Source directory path.
+        suffix: String to append (e.g. ``"_confermati"``, ``"_scartati"``).
 
     Returns:
         Destination directory path.
     """
-    return source_folder.parent / (source_folder.name + "_confermati")
-
-
-def _discarded_root(source_folder: Path) -> Path:
-    """Derive the discarded destination root from a source folder path.
-
-    Args:
-        source_folder: Source directory path.
-
-    Returns:
-        Discarded directory path.
-    """
-    return source_folder.parent / (source_folder.name + "_scartati")
+    return source_folder.parent / (source_folder.name + suffix)
 
 
 def _resolve_dest_path(dest_dir: Path, filename: str) -> Path:
@@ -152,10 +138,6 @@ def move_to_discarded(
 # Format conversion
 # ---------------------------------------------------------------------------
 
-# Extensions that map to each target format
-_PDF_EXTENSIONS = {".pdf"}
-_TIF_EXTENSIONS = {".tif", ".tiff"}
-_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
 _CONVERT_DPI = 300  # render resolution for PDF → image conversion
 
 
@@ -177,12 +159,12 @@ def _convert_if_needed(source: Path, target_format: str) -> Path:
     ext = source.suffix.lower()
 
     if target_format == "pdf":
-        if ext in _PDF_EXTENSIONS:
+        if ext in PDF_EXTENSIONS:
             return source  # already PDF
         return _convert_to_pdf(source)
 
     if target_format == "tif":
-        if ext in _TIF_EXTENSIONS:
+        if ext in TIF_EXTENSIONS:
             return source  # already TIF
         return _convert_to_tif(source)
 
@@ -203,7 +185,7 @@ def _convert_to_pdf(source: Path) -> Path:
     ext = source.suffix.lower()
 
     # For multi-page TIFF, extract all frames first
-    if ext in _TIF_EXTENSIONS:
+    if ext in TIF_EXTENSIONS:
         frames = _tiff_frames_as_jpeg_bytes(source)
     else:
         # Single image — img2pdf handles jpg/png/bmp directly
@@ -212,17 +194,12 @@ def _convert_to_pdf(source: Path) -> Path:
     pdf_bytes = img2pdf.convert(frames)
     dest.write_bytes(pdf_bytes)
     logger.info("Converted '%s' → '%s'.", source.name, dest.name)
-
-    # Remove original since we'll move the converted file
-    if dest != source:
-        source.unlink(missing_ok=True)
+    source.unlink(missing_ok=True)
     return dest
 
 
 def _tiff_frames_as_jpeg_bytes(source: Path) -> list[bytes]:
     """Extract all frames from a TIFF as JPEG byte strings for img2pdf."""
-    import io
-
     pil = Image.open(source)
     frames: list[bytes] = []
     frame_idx = 0
@@ -250,7 +227,7 @@ def _convert_to_tif(source: Path) -> Path:
     ext = source.suffix.lower()
     dest = source.with_suffix(".tif")
 
-    if ext in _PDF_EXTENSIONS:
+    if ext in PDF_EXTENSIONS:
         pages = _pdf_pages_as_pil(source)
     else:
         # Single image
@@ -260,51 +237,27 @@ def _convert_to_tif(source: Path) -> Path:
         logger.error("No pages extracted from '%s' — skipping conversion.", source.name)
         return source
 
-    # Save as multi-page TIFF
-    if len(pages) == 1:
-        pages[0].save(dest, format="TIFF", compression="tiff_deflate")
-    else:
-        pages[0].save(
-            dest, format="TIFF", compression="tiff_deflate",
-            save_all=True, append_images=pages[1:],
-        )
+    pages[0].save(
+        dest, format="TIFF", compression="tiff_deflate",
+        save_all=True, append_images=pages[1:],
+    )
 
     logger.info("Converted '%s' → '%s'.", source.name, dest.name)
-    if dest != source:
-        source.unlink(missing_ok=True)
+    source.unlink(missing_ok=True)
     return dest
 
 
 def _pdf_pages_as_pil(source: Path) -> list[Image.Image]:
-    """Render each PDF page to a PIL Image via QPdfDocument."""
-    doc = QPdfDocument(None)
-    error = doc.load(str(source))
-    if error != QPdfDocument.Error.None_:
-        logger.error("Cannot open PDF '%s' for conversion: %s", source, error)
+    """Render each PDF page to a PIL Image."""
+    doc = open_pdf(source)
+    if doc is None:
         return []
 
     pages: list[Image.Image] = []
-    scale = _CONVERT_DPI / 72
     for page_num in range(doc.pageCount()):
-        page_size = doc.pagePointSize(page_num)
-        w = max(1, int(page_size.width() * scale))
-        h = max(1, int(page_size.height() * scale))
-
-        qimage = doc.render(page_num, QSize(w, h))
-        if qimage.isNull():
-            continue
-
-        # Composite onto white background
-        bg = QImage(w, h, QImage.Format.Format_RGB888)
-        bg.fill(0xFFFFFF)
-        painter = QPainter(bg)
-        painter.drawImage(0, 0, qimage)
-        painter.end()
-
-        bpl = bg.bytesPerLine()
-        arr = np.frombuffer(bg.bits(), dtype=np.uint8).reshape((h, bpl))
-        arr = arr[:, : w * 3].reshape((h, w, 3)).copy()
-        pages.append(Image.fromarray(arr, "RGB"))
+        pil = render_page_to_pil(doc, page_num, dpi=_CONVERT_DPI)
+        if pil is not None:
+            pages.append(pil)
 
     doc.close()
     return pages
@@ -328,10 +281,9 @@ def _move_file(
 
     if dest_dir:
         resolved_dir = Path(dest_dir)
-    elif action == "confirmed":
-        resolved_dir = _destination_root(source.parent)
     else:
-        resolved_dir = _discarded_root(source.parent)
+        suffix = "_confermati" if action == "confirmed" else "_scartati"
+        resolved_dir = _derived_root(source.parent, suffix)
 
     # Organise into a date-based subfolder (YYYYMMDD)
     date_folder = datetime.now().strftime("%Y%m%d")

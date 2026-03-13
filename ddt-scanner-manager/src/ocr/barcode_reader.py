@@ -9,16 +9,12 @@ import numpy as np
 from PIL import Image
 from pyzbar import pyzbar
 from pyzbar.pyzbar import ZBarSymbol
-from PySide6.QtCore import QSize
-from PySide6.QtGui import QImage, QPainter
-from PySide6.QtPdf import QPdfDocument
 
+from src.config import PDF_EXTENSIONS, SUPPORTED_EXTENSIONS, TIF_EXTENSIONS
 from src.utils.logger import get_logger
+from src.utils.pdf_renderer import open_pdf, render_page_to_pil
 
 logger = get_logger("ocr.barcode_reader")
-
-# Supported input extensions
-SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".pdf"}
 
 
 @dataclass
@@ -61,9 +57,9 @@ def read_barcodes(file_path: str | Path) -> list[ScanResult]:
     if ext not in SUPPORTED_EXTENSIONS:
         raise ValueError(f"Unsupported file extension: {ext}")
 
-    if ext == ".pdf":
+    if ext in PDF_EXTENSIONS:
         return _scan_pdf(path)
-    elif ext in (".tif", ".tiff"):
+    elif ext in TIF_EXTENSIONS:
         return _scan_tiff(path)
     else:
         return [_scan_image_file(path, page=0)]
@@ -73,8 +69,11 @@ def read_barcodes(file_path: str | Path) -> list[ScanResult]:
 # PDF handling
 # ---------------------------------------------------------------------------
 
+_BARCODE_SCAN_DPI = 400  # high DPI for reliable barcode detection
+
+
 def _scan_pdf(path: Path) -> list[ScanResult]:
-    """Convert each PDF page to an image via QPdfDocument and scan for barcodes.
+    """Convert each PDF page to an image and scan for barcodes.
 
     Args:
         path: Path to the PDF file.
@@ -82,39 +81,17 @@ def _scan_pdf(path: Path) -> list[ScanResult]:
     Returns:
         List of ScanResult, one per page.
     """
-    doc = QPdfDocument(None)
-    error = doc.load(str(path))
-    if error != QPdfDocument.Error.None_:
-        logger.error("QPdfDocument failed to load '%s': %s", path, error)
-        return [ScanResult(error=f"Errore apertura PDF: {error}")]
-
-    page_count = doc.pageCount()
-    if page_count == 0:
-        return [ScanResult(error="PDF vuoto o non leggibile.")]
+    doc = open_pdf(path)
+    if doc is None:
+        return [ScanResult(error="Errore apertura PDF.")]
 
     results: list[ScanResult] = []
+    page_count = doc.pageCount()
     for page_num in range(page_count):
-        page_size = doc.pagePointSize(page_num)
-        scale = 400 / 72  # 400 dpi — match original scan resolution
-        w = max(1, int(page_size.width() * scale))
-        h = max(1, int(page_size.height() * scale))
-
-        qimage = doc.render(page_num, QSize(w, h))
-        if qimage.isNull():
+        pil_image = render_page_to_pil(doc, page_num, dpi=_BARCODE_SCAN_DPI)
+        if pil_image is None:
             results.append(ScanResult(error=f"Impossibile renderizzare pagina {page_num + 1}", page=page_num + 1))
             continue
-
-        # Composite onto white background (PDF may have transparent areas → black in RGB)
-        bg = QImage(w, h, QImage.Format.Format_RGB888)
-        bg.fill(0xFFFFFF)
-        painter = QPainter(bg)
-        painter.drawImage(0, 0, qimage)
-        painter.end()
-
-        bytes_per_line = bg.bytesPerLine()
-        arr = np.frombuffer(bg.bits(), dtype=np.uint8).reshape((h, bytes_per_line))
-        arr = arr[:, : w * 3].reshape((h, w, 3)).copy()
-        pil_image = Image.fromarray(arr, "RGB")
 
         result = _scan_pil_image(pil_image, page=page_num + 1)
         results.append(result)

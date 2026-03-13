@@ -10,11 +10,10 @@ from typing import Optional
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedEvent
 from watchdog.observers import Observer
 
+from src.config import SUPPORTED_EXTENSIONS
 from src.utils.logger import get_logger
 
 logger = get_logger("watcher.folder_watcher")
-
-SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".pdf"}
 POLLING_INTERVAL = 30  # seconds
 FILE_SETTLE_DELAY = 2.5  # seconds — wait after event before queuing (scanner may still write)
 

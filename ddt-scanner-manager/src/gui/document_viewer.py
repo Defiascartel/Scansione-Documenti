@@ -3,9 +3,8 @@
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QRectF, QSize
-from PySide6.QtGui import QImage, QPainter, QPixmap, QTransform, QWheelEvent
-from PySide6.QtPdf import QPdfDocument
+from PySide6.QtCore import Qt, QRectF
+from PySide6.QtGui import QPixmap, QTransform, QWheelEvent
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -18,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.utils.logger import get_logger
+from src.utils.pdf_renderer import open_pdf, render_page_to_qimage
 
 logger = get_logger("gui.document_viewer")
 
@@ -131,37 +131,19 @@ class DocumentViewer(QWidget):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    _PREVIEW_DPI = 150
+
     def _load_pdf_first_page(self, path: Path) -> Optional[QPixmap]:
         try:
-            doc = QPdfDocument(None)
-            error = doc.load(str(path))
-            if error != QPdfDocument.Error.None_ or doc.pageCount() == 0:
-                logger.warning("QPdfDocument could not open '%s' (error=%s)", path, error)
-                doc.close()
+            doc = open_pdf(path)
+            if doc is None:
                 return None
-
-            page_size = doc.pagePointSize(0)
-            scale = 150 / 72  # 150 dpi from 72-pt baseline
-            w = max(1, int(page_size.width() * scale))
-            h = max(1, int(page_size.height() * scale))
-
-            rendered = doc.render(0, QSize(w, h))
-            doc.close()  # Release file handle immediately after rendering
-
-            if rendered.isNull():
-                logger.warning("QPdfDocument.render returned null image for '%s'", path)
+            qimage = render_page_to_qimage(doc, 0, dpi=self._PREVIEW_DPI)
+            doc.close()
+            if qimage is None:
                 return None
-
-            # Composite onto white background (PDF transparent areas → black otherwise)
-            bg = QImage(w, h, QImage.Format.Format_RGB888)
-            bg.fill(0xFFFFFF)
-            painter = QPainter(bg)
-            painter.drawImage(0, 0, rendered)
-            painter.end()
-
-            pixmap = QPixmap.fromImage(bg)
+            pixmap = QPixmap.fromImage(qimage)
             return pixmap if not pixmap.isNull() else None
-
         except Exception as exc:
             logger.error("PDF render error for '%s': %s", path, exc)
             return None

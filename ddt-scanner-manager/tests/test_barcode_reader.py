@@ -195,46 +195,11 @@ def test_scan_pil_image_deduplicates():
 # PDF handling
 # ---------------------------------------------------------------------------
 
-def _make_qpdf_class_mock(page_count: int, fail_load: bool = False):
-    """Return a (MockClass, mock_instance) pair for QPdfDocument.
-
-    The mock class carries its own Error.None_ sentinel so that the equality
-    check inside _scan_pdf (``error != QPdfDocument.Error.None_``) works
-    correctly regardless of what the real enum value is.
-    """
-    from PySide6.QtGui import QImage
-
-    mock_cls = MagicMock()
-    mock_doc = MagicMock()
-    mock_cls.return_value = mock_doc
-
-    # Make Error.None_ a consistent sentinel on the mock class
-    none_sentinel = mock_cls.Error.None_
-    fail_sentinel = mock_cls.Error.InvalidFileFormat
-
-    mock_doc.load.return_value = fail_sentinel if fail_load else none_sentinel
-    mock_doc.pageCount.return_value = page_count
-
-    page_size = MagicMock()
-    page_size.width.return_value = 595.0
-    page_size.height.return_value = 842.0
-    mock_doc.pagePointSize.return_value = page_size
-
-    white = QImage(100, 100, QImage.Format.Format_RGB888)
-    white.fill(0xFFFFFF)
-    mock_doc.render.return_value = white
-    mock_doc.close = MagicMock()
-
-    return mock_cls
-
-
 def test_pdf_load_error_returns_error(tmp_path: Path):
     pdf = tmp_path / "bad.pdf"
     pdf.write_bytes(b"not a real pdf")
 
-    mock_cls = _make_qpdf_class_mock(page_count=0, fail_load=True)
-
-    with patch("src.ocr.barcode_reader.QPdfDocument", mock_cls):
+    with patch("src.ocr.barcode_reader.open_pdf", return_value=None):
         results = read_barcodes(pdf)
 
     assert len(results) == 1
@@ -245,14 +210,21 @@ def test_pdf_multi_page_returns_one_result_per_page(tmp_path: Path):
     pdf = tmp_path / "multi.pdf"
     pdf.write_bytes(b"%PDF-1.4 fake")
 
-    mock_cls = _make_qpdf_class_mock(page_count=3)
+    # Mock open_pdf to return a fake document with 3 pages
+    mock_doc = MagicMock()
+    mock_doc.pageCount.return_value = 3
 
-    with patch("src.ocr.barcode_reader.QPdfDocument", mock_cls):
-        with patch("src.ocr.barcode_reader.pyzbar.decode", return_value=[]):
-            results = read_barcodes(pdf)
+    # render_page_to_pil returns a small white PIL image for each page
+    white = Image.new("RGB", (100, 100), color=(255, 255, 255))
+
+    with patch("src.ocr.barcode_reader.open_pdf", return_value=mock_doc):
+        with patch("src.ocr.barcode_reader.render_page_to_pil", return_value=white):
+            with patch("src.ocr.barcode_reader.pyzbar.decode", return_value=[]):
+                results = read_barcodes(pdf)
 
     assert len(results) == 3
     assert [r.page for r in results] == [1, 2, 3]
+    mock_doc.close.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

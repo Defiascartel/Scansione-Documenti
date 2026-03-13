@@ -27,3 +27,9 @@ APP_VERSION = "1.0.0"
 # Default admin credentials (used only on first run)
 DEFAULT_ADMIN_USERNAME = "admin"
 DEFAULT_ADMIN_PASSWORD = "admin123"
+
+# Supported file extensions
+PDF_EXTENSIONS = {".pdf"}
+TIF_EXTENSIONS = {".tif", ".tiff"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
+SUPPORTED_EXTENSIONS = PDF_EXTENSIONS | TIF_EXTENSIONS | IMAGE_EXTENSIONS

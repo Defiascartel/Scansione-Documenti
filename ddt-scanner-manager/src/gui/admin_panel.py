@@ -701,7 +701,7 @@ class _LogTab(QWidget):
             try:
                 barcodes = json.loads(e.barcodes_json)
                 barcodes_text = ", ".join(barcodes) if barcodes else "—"
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
                 barcodes_text = e.barcodes_json
 
             action_color = QColor("#27ae60") if e.action == "confirmed" else QColor("#e74c3c")
