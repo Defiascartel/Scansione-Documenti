@@ -757,6 +757,13 @@ class _SettingsTab(QWidget):
         self._format_combo.currentIndexChanged.connect(self._on_format_changed)
         form.addRow("Formato file di output:", self._format_combo)
 
+        # JSON sidecar toggle
+        self._json_sidecar_check = QCheckBox("Genera file JSON sidecar accanto ai documenti processati")
+        sidecar_enabled = get_setting("json_sidecar_enabled", "1")
+        self._json_sidecar_check.setChecked(sidecar_enabled == "1")
+        self._json_sidecar_check.stateChanged.connect(self._on_sidecar_changed)
+        form.addRow("JSON sidecar:", self._json_sidecar_check)
+
         layout.addLayout(form)
         layout.addStretch()
 
@@ -764,6 +771,11 @@ class _SettingsTab(QWidget):
         value = self._format_combo.currentData()
         set_setting("output_format", value)
         logger.info("Output format setting changed to '%s'.", value)
+
+    def _on_sidecar_changed(self) -> None:
+        value = "1" if self._json_sidecar_check.isChecked() else "0"
+        set_setting("json_sidecar_enabled", value)
+        logger.info("JSON sidecar setting changed to '%s'.", value)
 
 
 # ---------------------------------------------------------------------------

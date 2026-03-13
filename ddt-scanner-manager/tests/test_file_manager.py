@@ -17,10 +17,16 @@ from src.utils.file_manager import (
 _TODAY = datetime.now().strftime("%Y%m%d")
 
 
+def _mock_get_setting(key: str, default: str | None = None) -> str | None:
+    """Provide default setting values for tests without hitting the DB."""
+    defaults = {"output_format": "same", "json_sidecar_enabled": "1"}
+    return defaults.get(key, default)
+
+
 @pytest.fixture(autouse=True)
 def _mock_output_format():
-    """Default to 'same' format so existing tests don't hit the DB."""
-    with patch("src.utils.file_manager.get_setting", return_value="same"):
+    """Default settings so existing tests don't hit the DB."""
+    with patch("src.utils.file_manager.get_setting", side_effect=_mock_get_setting):
         yield
 
 
@@ -164,7 +170,12 @@ def test_move_to_confirmed_with_format_conversion(tmp_path: Path):
     source_dir.mkdir()
     f = _make_test_image(source_dir / "ddt.jpg")
 
-    with patch("src.utils.file_manager.get_setting", return_value="pdf"):
+    def _pdf_settings(key: str, default: str | None = None) -> str | None:
+        if key == "output_format":
+            return "pdf"
+        return _mock_get_setting(key, default)
+
+    with patch("src.utils.file_manager.get_setting", side_effect=_pdf_settings):
         dest = move_to_confirmed(f, barcodes=["999"], username="u", store_id=1)
 
     assert dest.suffix == ".pdf"

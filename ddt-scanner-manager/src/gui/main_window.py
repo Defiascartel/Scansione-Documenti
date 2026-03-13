@@ -372,6 +372,13 @@ class MainWindow(QMainWindow):
             self._finalize_action(
                 event, f"Confermato: {event.path.name}  |  {len(barcodes)} barcode"
             )
+            QMessageBox.information(
+                self, "Documento confermato",
+                f"Documento confermato con successo.\n\n"
+                f"File: {event.path.name}\n"
+                f"Barcode: {', '.join(barcodes) if barcodes else '—'}\n"
+                f"Destinazione: {dest.parent}",
+            )
         except PermissionError:
             QMessageBox.warning(
                 self, "File bloccato",
@@ -380,7 +387,7 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             logger.error("Confirm error: %s", exc)
-            QMessageBox.warning(self, "Errore", f"Impossibile spostare il file:\n{exc}")
+            QMessageBox.critical(self, "Errore conferma", f"Impossibile confermare il file:\n\n{exc}")
 
     def _on_discarded(self) -> None:
         if not self._current_event:
@@ -403,6 +410,12 @@ class MainWindow(QMainWindow):
                 action="discarded",
             )
             self._finalize_action(event, f"Scartato: {event.path.name}")
+            QMessageBox.information(
+                self, "Documento scartato",
+                f"Documento scartato con successo.\n\n"
+                f"File: {event.path.name}\n"
+                f"Destinazione: {dest.parent}",
+            )
         except PermissionError:
             QMessageBox.warning(
                 self, "File bloccato",
@@ -411,7 +424,7 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             logger.error("Discard error: %s", exc)
-            QMessageBox.warning(self, "Errore", f"Impossibile spostare il file:\n{exc}")
+            QMessageBox.critical(self, "Errore scarto", f"Impossibile scartare il file:\n\n{exc}")
 
     def _finalize_action(self, event: FileEvent, status_msg: str) -> None:
         self._queue_panel.remove_file(event.path)

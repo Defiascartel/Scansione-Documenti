@@ -305,8 +305,10 @@ def _move_file(
     _move_with_retry(source, dest_file)
     logger.info("File %s → %s (%s)", source.name, dest_file, action)
 
-    _write_sidecar(dest_file, barcodes=barcodes, username=username,
-                   store_id=store_id, action=action)
+    sidecar_enabled = get_setting("json_sidecar_enabled", "1")
+    if sidecar_enabled == "1":
+        _write_sidecar(dest_file, barcodes=barcodes, username=username,
+                       store_id=store_id, action=action)
 
     return dest_file
 
